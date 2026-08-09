@@ -131,14 +131,38 @@ def name_of(url):
     return f"{url.split('/albums/')[-1].split('?')[0]}"
 
 
-def download_one(item, combo, outdir):
-    pid, url = item
+def plan_names(entries):
+    """Filename per photo; detect duplicate basenames BEFORE download and
+    disambiguate by prefixing the id so no file silently overwrites another."""
+    names = []
+    for pid, url, _dim in entries:
+        names.append(name_of(url).replace("/", "_"))
+    counts = {}
+    for n in names:
+        counts[n] = counts.get(n, 0) + 1
+    dups = sorted(n for n, c in counts.items() if c > 1)
+    if dups:
+        print(f"duplicate basenames detected, prefixing id: {dups}")
+    out, seen = [], set()
+    for (pid, url, _dim), base in zip(entries, names):
+        final = (f"{pid}_{base}" if counts[base] > 1 else base)
+        n = 1
+        while final in seen:
+            n += 1
+            final = f"{pid}_{n}_{base}"
+        seen.add(final)
+        out.append((pid, url, final))
+    return out, dups
+
+
+def download_one(task, combo, outdir):
+    pid, url, final = task
     base = best_url(url)
     d = fetch(base + combo)
     if not d:
         return pid, None, None, None
     dim = jpeg_dim(d)
-    path = os.path.join(outdir, f"{pid}_{name_of(url)}".replace("/", "_"))
+    path = os.path.join(outdir, final)
     with open(path, "wb") as f:
         f.write(d)
     return pid, f"{dim[0]}x{dim[1]}" if dim else "?", len(d), path
@@ -185,11 +209,16 @@ def main():
     lc, pc = calibrate(entries)
 
     print("3/3 downloading all with calibrated combos...")
+    planned, dups = plan_names(entries)
+    choice = {True: lc, False: pc}
+    tasks = [
+        ((pid, url, final), choice(dim and dim[0] > dim[1]))
+        for (pid, url, dim), (_, _, final) in zip(entries, planned)
+    ]
     paths, ok = [], 0
-    tasks = [(pid, url, (lc if (dim and dim[0] > dim[1]) else pc)) for pid, url, dim in entries]
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         for pid, dim, nbytes, path in ex.map(
-            lambda t: download_one((t[0], t[1]), t[2], args.out), tasks
+            lambda t: download_one(t[0], t[1], args.out), tasks
         ):
             print(f"{'OK' if path else 'FAIL'} {dim} {nbytes // 1024 if nbytes else 0}k {os.path.basename(path) if path else pid}")
             if path:
