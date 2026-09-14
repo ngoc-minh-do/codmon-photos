@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Fetch best-resolution photos from a Codmon API response JSON and
-optionally upload them to an anonymous SMB share under a date folder.
+"""Fetch best-resolution photos from a Codmon API response JSON into
+./downloads/<date>.
 
 Usage:
-  uv run scripts/codmon_sync.py <response.json> [--out DIR] [--host HOST] [--share SHARE]
-                                [--date YYYY-MM-DD] [--no-upload] [--workers N]
+  uv run scripts/codmon_sync.py <response.json> [--out DIR] [--date YYYY-MM-DD]
+                                [--workers N]
 
 Pipeline (does not search best resolution on every photo):
   1. Classify: one tiny probe fetch (`width=10`) per photo to learn its
      orientation cheaply (aspect is preserved at any size).
   2. Calibrate: take ONE landscape and ONE portrait photo, fetch both size
      combos (`width=0&height=500` vs `width=500&height=0`) and pick the combo
-     that yields the larger image for each orientation.
+     that yields the larger image for each orientation. Single-orientation
+     albums calibrate the present orientation and assume the default combo for
+     the missing one.
   3. Download: fetch every photo once, using the calibrated best combo for its
      orientation.
 
@@ -34,8 +36,6 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-
-from smb.SMBConnection import SMBConnection  # provided by uv venv (.venv)
 
 MAX_AXIS = 500
 COMBO_H = f"&width=0&height={MAX_AXIS}"  # landscape best candidate
@@ -104,13 +104,13 @@ def probe_combo(base, combo):
 
 
 def calibrate(entries):
-    """Pick one landscape + one portrait, find the best combo for each."""
+    """Find the best combo for each orientation present; assume the default
+    combo for orientations missing from the album (single-orientation albums
+    are valid - every photo just shares one combo)."""
     lands = [e for e in entries if e[2] and e[2][0] > e[2][1]]
     ports = [e for e in entries if e[2] and e[2][0] < e[2][1]]
-    if not lands or not ports:
-        raise SystemExit("need at least one landscape and one portrait photo to calibrate")
-    land = lands[0]
-    port = ports[0]
+    if not lands and not ports:
+        raise SystemExit("no photos classified (signed URLs expired?); need a fresh response.json")
 
     def best(entry):
         base = best_url(entry[1])
@@ -120,10 +120,18 @@ def calibrate(entries):
         w_area = (ww[0] * ww[1]) if ww else 0
         return COMBO_H if h_area >= w_area else COMBO_W, hw, ww
 
-    lc, lh, lw = best(lands[0])
-    pc, ph, pw = best(ports[0])
-    print(f"calibrate landscape {lands[0][0]}: H={lh} W={lw} -> {lc}")
-    print(f"calibrate portrait  {ports[0][0]}: H={ph} W={pw} -> {pc}")
+    if lands:
+        lc, lh, lw = best(lands[0])
+        print(f"calibrate landscape {lands[0][0]}: H={lh} W={lw} -> {lc}")
+    else:
+        lc = COMBO_H
+        print(f"no landscape photos; assuming {lc}")
+    if ports:
+        pc, ph, pw = best(ports[0])
+        print(f"calibrate portrait  {ports[0][0]}: H={ph} W={pw} -> {pc}")
+    else:
+        pc = COMBO_W
+        print(f"no portrait photos; assuming {pc}")
     return lc, pc
 
 
@@ -168,39 +176,19 @@ def download_one(task, combo, outdir):
     return pid, f"{dim[0]}x{dim[1]}" if dim else "?", len(d), path
 
 
-def smb_put(host, port, share, date, files):
-    c = SMBConnection("", "", "lab", "host", use_ntlm_v2=True, is_direct_tcp=True)
-    if not c.connect(host, port, timeout=15):
-        raise SystemExit(f"cannot connect to SMB {host}:{port}")
-    try:
-        c.createDirectory(share, f"/{date}")
-    except Exception:
-        pass
-    n = 0
-    for path in files:
-        with open(path, "rb") as f:
-            c.storeFile(share, f"/{date}/{os.path.basename(path)}", f, timeout=120)
-        n += 1
-    c.close()
-    return n
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("response_json")
     ap.add_argument("--out", default="downloads")
-    ap.add_argument("--host", default="192.168.0.100")
-    ap.add_argument("--port", type=int, default=445)
-    ap.add_argument("--share", default="share")
     ap.add_argument("--date", default=time.strftime("%Y-%m-%d"))
     ap.add_argument("--workers", type=int, default=4)
-    ap.add_argument("--no-upload", action="store_true")
     args = ap.parse_args()
 
     photos = collect_photos(json.load(open(args.response_json)), [])
     if not photos:
         raise SystemExit("no Codmon photo URLs found in the JSON")
-    os.makedirs(args.out, exist_ok=True)
+    outdir = os.path.join(args.out, args.date)
+    os.makedirs(outdir, exist_ok=True)
 
     print("1/3 classifying orientations (tiny probes)...")
     entries = classify(photos, args.workers)
@@ -212,25 +200,18 @@ def main():
     planned, dups = plan_names(entries)
     choice = {True: lc, False: pc}
     tasks = [
-        ((pid, url, final), choice(dim and dim[0] > dim[1]))
+        ((pid, url, final), choice[bool(dim and dim[0] > dim[1])])
         for (pid, url, dim), (_, _, final) in zip(entries, planned)
     ]
-    paths, ok = [], 0
+    ok = 0
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         for pid, dim, nbytes, path in ex.map(
-            lambda t: download_one(t[0], t[1], args.out), tasks
+            lambda t: download_one(t[0], t[1], outdir), tasks
         ):
             print(f"{'OK' if path else 'FAIL'} {dim} {nbytes // 1024 if nbytes else 0}k {os.path.basename(path) if path else pid}")
             if path:
                 ok += 1
-                paths.append(path)
-    print(f"--- downloaded {ok}/{len(photos)}")
-
-    if ok and not args.no_upload:
-        n = smb_put(args.host, args.port, args.share, args.date, paths)
-        print(f"--- uploaded {n} files to //{args.host}/{args.share}/{args.date}")
-    elif ok:
-        print(f"--- upload skipped (--no-upload); files in {args.out}")
+    print(f"--- downloaded {ok}/{len(photos)} to {outdir}")
 
 
 if __name__ == "__main__":
