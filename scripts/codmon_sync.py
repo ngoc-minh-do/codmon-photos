@@ -176,18 +176,41 @@ def download_one(task, combo, outdir):
     return pid, f"{dim[0]}x{dim[1]}" if dim else "?", len(d), path
 
 
+def insert_date(path):
+    """Date (YYYY-MM-DD) from the first photo's insert_datetime, else today."""
+    def walk(obj):
+        if isinstance(obj, dict):
+            v = obj.get("insert_datetime")
+            if isinstance(v, str) and len(v) >= 10 and v[4] == v[7] == "-":
+                return v[:10]
+            for value in obj.values():
+                d = walk(value)
+                if d:
+                    return d
+        elif isinstance(obj, list):
+            for value in obj:
+                d = walk(value)
+                if d:
+                    return d
+        return None
+    date = walk(json.load(open(path)))
+    return date or time.strftime("%Y-%m-%d")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("response_json")
     ap.add_argument("--out", default="downloads")
-    ap.add_argument("--date", default=time.strftime("%Y-%m-%d"))
+    ap.add_argument("--date", default=None,
+                    help="YYYY-MM-DD; default is the response's insert_datetime")
     ap.add_argument("--workers", type=int, default=4)
     args = ap.parse_args()
 
+    date = args.date or insert_date(args.response_json)
     photos = collect_photos(json.load(open(args.response_json)), [])
     if not photos:
         raise SystemExit("no Codmon photo URLs found in the JSON")
-    outdir = os.path.join(args.out, args.date)
+    outdir = os.path.join(args.out, date)
     os.makedirs(outdir, exist_ok=True)
 
     print("1/3 classifying orientations (tiny probes)...")

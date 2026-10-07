@@ -3,7 +3,8 @@
 ## Project
 
 Download photos from a Codmon API response JSON at the best resolution the CDN
-allows into `./downloads/<date>` (e.g. `downloads/2026-09-14`). No upload step —
+allows into `./downloads/<date>` (e.g. `downloads/2026-09-14`). The date comes
+from the response's `insert_datetime` (falls back to today). No upload step —
 photos stay local. Recurring, roughly monthly task.
 
 ## How to run
