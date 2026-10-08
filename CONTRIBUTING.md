@@ -19,9 +19,11 @@ cp .env.example .env   # fill CODMON_EMAIL / CODMON_PASSWORD (and optionally SMB
 Run the same checks CI runs before pushing:
 
 ```bash
-uvx ruff check scripts --select E,F,I,UP,B --ignore E501
-uv run python -m py_compile scripts/*.py
+make check          # lint + format-check + compile + tests
 ```
+
+(Or run them individually: `make lint`, `make format`, `make format-check`,
+`make test`, `make compile`.)
 
 ## Opening a PR
 

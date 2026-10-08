@@ -5,6 +5,7 @@ Albums are fetched straight from the Codmon parent API and
 downloaded into ./downloads/<display_date>_<album_title>. See AGENTS.md for the
 calibration pipeline and CDN rules.
 """
+
 import argparse
 import json
 import os
@@ -43,9 +44,7 @@ def jpeg_dim(data):
             continue
         ln = int.from_bytes(data[i + 2 : i + 4], "big")
         if m in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
-            return int.from_bytes(data[i + 7 : i + 9], "big"), int.from_bytes(
-                data[i + 5 : i + 7], "big"
-            )
+            return int.from_bytes(data[i + 7 : i + 9], "big"), int.from_bytes(data[i + 5 : i + 7], "big")
         i += 2 + ln
     return None
 
@@ -65,10 +64,12 @@ def best_url(url):
 
 def classify(items, workers):
     """Tiny probe each photo for orientation. -> list of (pid, url, (w,h) or None)"""
+
     def probe(item):
         pid, url = item
         d = fetch(best_url(url) + PROBE)
         return pid, url, (jpeg_dim(d) if d else None)
+
     with ThreadPoolExecutor(max_workers=workers) as ex:
         return list(ex.map(probe, items))
 
@@ -129,7 +130,7 @@ def plan_names(entries):
         print(f"duplicate basenames detected, prefixing id: {dups}")
     out, seen = [], set()
     for (pid, url, _dim), base in zip(entries, names, strict=True):
-        final = (f"{pid}_{base}" if counts[base] > 1 else base)
+        final = f"{pid}_{base}" if counts[base] > 1 else base
         n = 1
         while final in seen:
             n += 1
@@ -236,9 +237,7 @@ def notify(url, title, body):
     if not url:
         return False
     payload = json.dumps({"title": title, "body": body, "type": "success"}).encode("utf-8")
-    req = urllib.request.Request(
-        url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
-    )
+    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             resp.read()
@@ -285,10 +284,10 @@ def run_album(photos, folder, exif_dt, out, workers, tz):
     ]
     ok = 0
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        for pid, dim, nbytes, path in ex.map(
-            lambda t: download_one(t[0], t[1], outdir, exif_dt, tz), tasks
-        ):
-            print(f"{'OK' if path else 'FAIL'} {dim} {nbytes // 1024 if nbytes else 0}k {os.path.basename(path) if path else pid}")
+        for pid, dim, nbytes, path in ex.map(lambda t: download_one(t[0], t[1], outdir, exif_dt, tz), tasks):
+            print(
+                f"{'OK' if path else 'FAIL'} {dim} {nbytes // 1024 if nbytes else 0}k {os.path.basename(path) if path else pid}"
+            )
             if path:
                 ok += 1
     print(f"--- downloaded {ok}/{len(photos)} to {outdir}")
@@ -307,12 +306,15 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--out", default="downloads")
-    ap.add_argument("--date", default=None,
-                    help="YYYY-MM-DD; default scans the last --lookback days for albums")
-    ap.add_argument("--lookback", type=int, default=45,
-                    help="days back from today to scan when --date is omitted (default 45)")
-    ap.add_argument("--tz", default=DEFAULT_TZ,
-                    help="timezone of insert_datetime, as EXIF OffsetTimeOriginal (default: +09:00 Tokyo)")
+    ap.add_argument("--date", default=None, help="YYYY-MM-DD; default scans the last --lookback days for albums")
+    ap.add_argument(
+        "--lookback", type=int, default=45, help="days back from today to scan when --date is omitted (default 45)"
+    )
+    ap.add_argument(
+        "--tz",
+        default=DEFAULT_TZ,
+        help="timezone of insert_datetime, as EXIF OffsetTimeOriginal (default: +09:00 Tokyo)",
+    )
     ap.add_argument("--workers", type=int, default=4)
     args = ap.parse_args()
 
