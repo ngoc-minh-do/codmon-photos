@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Fetch best-resolution photos from a Codmon API response JSON into
-./downloads/<date>.
+"""Download photos from Codmon at the best resolution the CDN allows into
+./downloads/<date>, fetching albums directly from the Codmon API (no
+response.json needed).
 
 Usage:
-  uv run scripts/codmon_sync.py <response.json> [--out DIR] [--date YYYY-MM-DD]
-                                [--workers N]
+  uv run scripts/codmon_sync.py [--out DIR] [--date YYYY-MM-DD]
+                                [--lookback N] [--workers N] [--tz +09:00]
+
+Credentials come from CODMON_EMAIL / CODMON_PASSWORD (a .env is auto-loaded,
+see .env.example). Without --date, the timeline is scanned back --lookback days
+(default 45) and every photo album found is downloaded into a folder named by
+its display_date.
 
 Pipeline (does not search best resolution on every photo):
   1. Classify: one tiny probe fetch (`width=10`) per photo to learn its
@@ -14,8 +20,8 @@ Pipeline (does not search best resolution on every photo):
      that yields the larger image for each orientation. Single-orientation
      albums calibrate the present orientation and assume the default combo for
      the missing one.
-3. Download: fetch every photo once, using the calibrated best combo for its
-      orientation.
+  3. Download: fetch every photo once, using the calibrated best combo for its
+     orientation.
 
 The CDN strips all EXIF on re-encode, so after download each photo is stamped
 with DateTimeOriginal + OffsetTimeOriginal from the album's insert_datetime
@@ -35,19 +41,22 @@ Background / best-resolution rules (from live probing):
     500x890).
 """
 import argparse
-import json
 import os
 import subprocess
-import sys
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import piexif
+from codmon_api import CodmonClient, CodmonError
+from dotenv import load_dotenv
 
 MAX_AXIS = 500
 COMBO_H = f"&width=0&height={MAX_AXIS}"  # landscape best candidate
 COMBO_W = f"&width={MAX_AXIS}&height=0"  # portrait best candidate
-PROBE = f"&width=10&height=0"
+PROBE = "&width=10&height=0"
 DEFAULT_TZ = "+09:00"  # insert_datetime is Tokyo time
 
 
@@ -79,18 +88,6 @@ def fetch(url, retries=3):
     return None
 
 
-def collect_photos(obj, out):
-    if isinstance(obj, dict):
-        if isinstance(obj.get("url"), str) and "codmon.com" in obj["url"]:
-            out.append((obj.get("id"), obj["url"]))
-        for v in obj.values():
-            collect_photos(v, out)
-    elif isinstance(obj, list):
-        for v in obj:
-            collect_photos(v, out)
-    return out
-
-
 def best_url(url):
     return url.split("&width=")[0]
 
@@ -118,7 +115,7 @@ def calibrate(entries):
     lands = [e for e in entries if e[2] and e[2][0] > e[2][1]]
     ports = [e for e in entries if e[2] and e[2][0] < e[2][1]]
     if not lands and not ports:
-        raise SystemExit("no photos classified (signed URLs expired?); need a fresh response.json")
+        raise SystemExit("no photos classified (signed URLs expired?); re-run to get fresh URLs")
 
     def best(entry):
         base = best_url(entry[1])
@@ -151,7 +148,7 @@ def plan_names(entries):
     """Filename per photo; detect duplicate basenames BEFORE download and
     disambiguate by prefixing the id so no file silently overwrites another."""
     names = []
-    for pid, url, _dim in entries:
+    for _pid, url, _dim in entries:
         names.append(name_of(url).replace("/", "_"))
     counts = {}
     for n in names:
@@ -160,7 +157,7 @@ def plan_names(entries):
     if dups:
         print(f"duplicate basenames detected, prefixing id: {dups}")
     out, seen = [], set()
-    for (pid, url, _dim), base in zip(entries, names):
+    for (pid, url, _dim), base in zip(entries, names, strict=True):
         final = (f"{pid}_{base}" if counts[base] > 1 else base)
         n = 1
         while final in seen:
@@ -186,26 +183,6 @@ def download_one(task, combo, outdir, exif_dt, tz):
     return pid, f"{dim[0]}x{dim[1]}" if dim else "?", len(d), path
 
 
-def find_insert_datetime(data):
-    """Raw 'YYYY-MM-DD HH:MM:SS' of the first insert_datetime found, else None."""
-    def walk(obj):
-        if isinstance(obj, dict):
-            v = obj.get("insert_datetime")
-            if isinstance(v, str):
-                return v
-            for value in obj.values():
-                r = walk(value)
-                if r:
-                    return r
-        elif isinstance(obj, list):
-            for value in obj:
-                r = walk(value)
-                if r:
-                    return r
-        return None
-    return walk(data)
-
-
 def stamp_exif(path, dt, tz):
     """Embed DateTimeOriginal (+OffsetTimeOriginal) into the saved JPEG so
     apps that export/sub-group by capture date (Immich, Windows Explorer, ...)
@@ -224,35 +201,26 @@ def stamp_exif(path, dt, tz):
     piexif.insert(piexif.dump(exif), path)
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("response_json")
-    ap.add_argument("--out", default="downloads")
-    ap.add_argument("--date", default=None,
-                    help="YYYY-MM-DD; default is the response's insert_datetime")
-    ap.add_argument("--tz", default=DEFAULT_TZ,
-                    help="timezone of insert_datetime, as EXIF OffsetTimeOriginal (default: +09:00 Tokyo)")
-    ap.add_argument("--workers", type=int, default=4)
-    args = ap.parse_args()
+def to_exif_dt(raw):
+    """'YYYY-MM-DD HH:MM:SS' -> EXIF 'YYYY:MM:DD HH:MM:SS', or None."""
+    if not raw or len(raw) < 10:
+        return None
+    return raw.replace("-", ":", 2)
 
-    data = json.load(open(args.response_json))
-    raw_dt = find_insert_datetime(data)
-    if raw_dt and len(raw_dt) >= 10:
-        date = args.date or raw_dt[:10]
-        exif_dt = raw_dt.replace("-", ":", 2)
-        print(f"insert_datetime: {raw_dt} (tz {args.tz}) -> EXIF DateTimeOriginal {exif_dt}")
-    else:
-        date = args.date or time.strftime("%Y-%m-%d")
-        exif_dt = None
 
-    photos = collect_photos(data, [])
-    if not photos:
-        raise SystemExit("no Codmon photo URLs found in the JSON")
-    outdir = os.path.join(args.out, date)
+def timezone():
+    name = (os.environ.get("TZ") or "Asia/Tokyo").lstrip(":")
+    return ZoneInfo(name) if name else ZoneInfo("Asia/Tokyo")
+
+
+def run_album(photos, folder, exif_dt, out, workers, tz):
+    """Run the 3-phase pipeline for one album into downloads/<folder>; returns
+    the number of downloaded photos."""
+    outdir = os.path.join(out, folder)
     os.makedirs(outdir, exist_ok=True)
 
     print("1/3 classifying orientations (tiny probes)...")
-    entries = classify(photos, args.workers)
+    entries = classify(photos, workers)
 
     print("2/3 calibrating best combo on 1 landscape + 1 portrait...")
     lc, pc = calibrate(entries)
@@ -262,17 +230,68 @@ def main():
     choice = {True: lc, False: pc}
     tasks = [
         ((pid, url, final), choice[bool(dim and dim[0] > dim[1])])
-        for (pid, url, dim), (_, _, final) in zip(entries, planned)
+        for (pid, url, dim), (_, _, final) in zip(entries, planned, strict=True)
     ]
     ok = 0
-    with ThreadPoolExecutor(max_workers=args.workers) as ex:
+    with ThreadPoolExecutor(max_workers=workers) as ex:
         for pid, dim, nbytes, path in ex.map(
-            lambda t: download_one(t[0], t[1], outdir, exif_dt, args.tz), tasks
+            lambda t: download_one(t[0], t[1], outdir, exif_dt, tz), tasks
         ):
             print(f"{'OK' if path else 'FAIL'} {dim} {nbytes // 1024 if nbytes else 0}k {os.path.basename(path) if path else pid}")
             if path:
                 ok += 1
     print(f"--- downloaded {ok}/{len(photos)} to {outdir}")
+    return ok
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--out", default="downloads")
+    ap.add_argument("--date", default=None,
+                    help="YYYY-MM-DD; default scans the last --lookback days for albums")
+    ap.add_argument("--lookback", type=int, default=45,
+                    help="days back from today to scan when --date is omitted (default 45)")
+    ap.add_argument("--tz", default=DEFAULT_TZ,
+                    help="timezone of insert_datetime, as EXIF OffsetTimeOriginal (default: +09:00 Tokyo)")
+    ap.add_argument("--workers", type=int, default=4)
+    args = ap.parse_args()
+
+    load_dotenv()
+    email = os.environ.get("CODMON_EMAIL", "").strip()
+    password = os.environ.get("CODMON_PASSWORD", "").strip()
+    if not email or not password:
+        raise SystemExit("set CODMON_EMAIL and CODMON_PASSWORD (see .env.example)")
+
+    if args.date:
+        start = end = args.date
+    else:
+        today = datetime.now(timezone()).date()
+        start = (today - timedelta(days=args.lookback)).isoformat()
+        end = today.isoformat()
+
+    print(f"logging in and scanning timeline {start}..{end}...")
+    try:
+        albums = CodmonClient(email, password).albums(start, end)
+    except CodmonError as exc:
+        raise SystemExit(f"Codmon API error: {exc}") from exc
+    if not albums:
+        raise SystemExit(f"no photo albums found in {start}..{end}")
+
+    dates = Counter(a.display_date for a in albums)
+    total = 0
+    for album in albums:
+        folder = album.display_date
+        if dates[folder] > 1:
+            folder = f"{folder}_{album.album_id}"
+        exif_dt = to_exif_dt(album.insert_datetime)
+        print(
+            f"album {album.album_id} {album.title!r} ({len(album.photos)} photos) "
+            f"display={album.display_date} insert={album.insert_datetime}"
+        )
+        if exif_dt:
+            print(f"   -> EXIF DateTimeOriginal {exif_dt} (tz {args.tz})")
+        total += run_album(album.photos, folder, exif_dt, args.out, args.workers, args.tz)
+    print(f"done: {total} photos across {len(albums)} album(s) under {args.out}/")
 
 
 if __name__ == "__main__":

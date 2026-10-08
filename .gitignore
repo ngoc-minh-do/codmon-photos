@@ -13,4 +13,7 @@ dist/
 # Project data
 downloads/
 
+# Credentials
+.env
+
 response.json
