@@ -4,8 +4,7 @@
 
 ## Checks
 
-- [ ] `uvx ruff check scripts --select E,F,I,UP,B --ignore E501` passes
-- [ ] `uv run python -m py_compile scripts/*.py` passes
+- [ ] `make check` passes locally (lint + format + compile + tests)
 - [ ] `README.md` / `CHANGELOG.md` updated if user-visible behavior changed
 - [ ] No `.env` or real credentials included
 

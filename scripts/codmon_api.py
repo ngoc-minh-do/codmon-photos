@@ -8,6 +8,7 @@ the nursery service_id (with use_image_edge=true so photo URLs come back
 signed for the CloudFront CDN), and a /timeline scan returns the photo albums
 (kind=8) whose ``photos`` array carries ``{id, url}`` entries.
 """
+
 from __future__ import annotations
 
 import http.cookiejar
@@ -150,9 +151,7 @@ class CodmonClient:
                             album_id=album_id,
                             title=str(detail.get("title") or item.get("title") or ""),
                             display_date=display[:10],
-                            insert_datetime=str(
-                                detail.get("insert_datetime") or item.get("insert_datetime") or ""
-                            ),
+                            insert_datetime=str(detail.get("insert_datetime") or item.get("insert_datetime") or ""),
                             photos=photos,
                         )
                     )
