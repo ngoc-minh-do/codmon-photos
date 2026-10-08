@@ -23,7 +23,8 @@ uv run scripts/codmon_sync.py               # scan last 45 days, download every 
 uv run scripts/codmon_sync.py --date 2026-10-05   # one specific day
 ```
 
-Options: `--date`, `--lookback` (default 45 days), `--out`, `--workers`, `--tz`.
+Options: `--date`, `--lookback` (default 45 days), `--out`, `--workers`, `--tz`,
+`--dry-run` (list albums/photos that would be downloaded; no fetch or writes).
 
 The script is a 3-phase pipeline — never reimplement or re-test per photo:
 
