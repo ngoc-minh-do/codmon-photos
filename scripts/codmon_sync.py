@@ -1,44 +1,9 @@
 #!/usr/bin/env python3
-"""Download photos from Codmon at the best resolution the CDN allows into
-./downloads/<date>, fetching albums directly from the Codmon API (no
-response.json needed).
+"""Download Codmon photo albums at the best resolution the CDN allows.
 
-Usage:
-  uv run scripts/codmon_sync.py [--out DIR] [--date YYYY-MM-DD]
-                                [--lookback N] [--workers N] [--tz +09:00]
-
-Credentials come from CODMON_EMAIL / CODMON_PASSWORD (a .env is auto-loaded,
-see .env.example). Without --date, the timeline is scanned back --lookback days
-(default 45) and every photo album found is downloaded into a folder named by
-its display_date.
-
-Pipeline (does not search best resolution on every photo):
-  1. Classify: one tiny probe fetch (`width=10`) per photo to learn its
-     orientation cheaply (aspect is preserved at any size).
-  2. Calibrate: take ONE landscape and ONE portrait photo, fetch both size
-     combos (`width=0&height=500` vs `width=500&height=0`) and pick the combo
-     that yields the larger image for each orientation. Single-orientation
-     albums calibrate the present orientation and assume the default combo for
-     the missing one.
-  3. Download: fetch every photo once, using the calibrated best combo for its
-     orientation.
-
-The CDN strips all EXIF on re-encode, so after download each photo is stamped
-with DateTimeOriginal + OffsetTimeOriginal from the album's insert_datetime
-(Tokyo time by default) so apps (Windows Explorer, Immich, ...) show the right
-capture date.
-
-Background / best-resolution rules (from live probing):
-  - Photo base URLs are signed CloudFront URLs; the *width*/*height* query
-    params ride inside the signed resource. Truncate the URL at "&width=" to
-    retune size while keeping Policy/Signature/Key-Pair-Id intact.
-  - Per-axis cap is 500 (a param >500 or 0&0 -> HTTP 400; omitting the params
-    -> HTTP 403). Supplying BOTH params boxes to the smaller — never helps.
-  - "width=X&height=0" constrains width, auto height; "width=0&height=Y"
-    constrains height, auto width. Constraining the axis that is SMALLER in
-    the photo's aspect lets the auto side grow past 500 (e.g. landscape
-    4:3 -> 667x500, 3:2 -> 750x500, 16:9 -> 1110x500; portrait -> 500x667 or
-    500x890).
+Albums are fetched straight from the Codmon parent API (no response.json) and
+downloaded into ./downloads/<display_date>_<album_title>. See AGENTS.md for the
+calibration pipeline and CDN rules.
 """
 import argparse
 import os
@@ -213,6 +178,16 @@ def timezone():
     return ZoneInfo(name) if name else ZoneInfo("Asia/Tokyo")
 
 
+def safe_title(title):
+    """Albums name directories; strip characters that break cross-platform
+    filesystems (Windows forbids < > : \" / \\ | ? *)."""
+    keep = []
+    for ch in str(title or "").strip():
+        keep.append("_" if ch in '<>:"/\\|?*' else ch)
+    name = "".join(keep).strip(" _.　")
+    return name or "album"
+
+
 def run_album(photos, folder, exif_dt, out, workers, tz):
     """Run the 3-phase pipeline for one album into downloads/<folder>; returns
     the number of downloaded photos."""
@@ -245,7 +220,16 @@ def run_album(photos, folder, exif_dt, out, workers, tz):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=(
+            "Examples:\n"
+            "  uv run scripts/codmon_sync.py                      # last ~6 weeks\n"
+            "  uv run scripts/codmon_sync.py --date 2026-10-05    # one day\n"
+            "  uv run scripts/codmon_sync.py --lookback 220       # ~since March\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("--out", default="downloads")
     ap.add_argument("--date", default=None,
                     help="YYYY-MM-DD; default scans the last --lookback days for albums")
@@ -277,11 +261,11 @@ def main():
     if not albums:
         raise SystemExit(f"no photo albums found in {start}..{end}")
 
-    dates = Counter(a.display_date for a in albums)
+    folders = [f"{a.display_date}_{safe_title(a.title)}" for a in albums]
+    name_counts = Counter(folders)
     total = 0
-    for album in albums:
-        folder = album.display_date
-        if dates[folder] > 1:
+    for album, folder in zip(albums, folders, strict=True):
+        if name_counts[folder] > 1:
             folder = f"{folder}_{album.album_id}"
         exif_dt = to_exif_dt(album.insert_datetime)
         print(

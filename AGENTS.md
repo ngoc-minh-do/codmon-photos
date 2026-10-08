@@ -3,9 +3,11 @@
 ## Project
 
 Download photos from Codmon at the best resolution the CDN allows into
-`./downloads/<date>` (e.g. `downloads/2026-09-14`). The date comes from each
-photo album's `insert_datetime` / `display_date` (Tokyo time). No upload step —
-photos stay local. Recurring, roughly monthly task.
+`./downloads/<display_date>_<album_title>` (e.g. `downloads/2026-10-05_〈0歳児〉9月の活動写真`;
+a `_<album_id>` suffix is added only when two albums share the same date+title).
+The date comes from each photo album's `insert_datetime` / `display_date`
+(Tokyo time). No upload step — photos stay local. Recurring, roughly monthly
+task.
 
 The script logs directly into the Codmon parent API (`ps-api.codmon.com`,
 email/password session) — no browser, no pasted JSON. The same internal API
@@ -31,7 +33,8 @@ The script is a 3-phase pipeline — never reimplement or re-test per photo:
    single-orientation (e.g. all landscape), calibrate what exists and assume the
    default combo for the missing orientation.
 3. **Download** — fetch every photo exactly once at the calibrated combo into
-   `./downloads/<date>`, then embed the album's `insert_datetime` as EXIF
+   `./downloads/<display_date>_<album_title>`, then embed the album's
+   `insert_datetime` as EXIF
    `DateTimeOriginal` + `OffsetTimeOriginal` (Tokyo +09:00) into each JPEG —
    the CDN strips all EXIF, so without this step importers (Immich, Windows)
    would date the photos at download time.
@@ -43,7 +46,7 @@ is 500; omitting size params -> 403.
 
 ## After the run
 
-- Report count, dims seen, and the output folder (`./downloads/<date>`).
+- Report count, dims seen, and the output folder (`./downloads/<date>_<title>`).
 
 ## Gotchas
 
@@ -61,4 +64,4 @@ is 500; omitting size params -> 403.
 - `pyproject.toml` / `uv.lock` — uv-managed deps
 - `.env.example` — credentials template; copy to `.env`
 - `.opencode/skills/codmon-photos-to-nas/SKILL.md` — workflow skill
-- `downloads/<date>/` — where photos land
+- `downloads/<date>_<title>/` — where photos land
