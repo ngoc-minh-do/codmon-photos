@@ -226,6 +226,22 @@ def smb_upload(local_dir, folder, cfg):
     return uploaded
 
 
+def target_has_files(target, smb):
+    """True when the album dir exists and holds at least one file, so it can be
+    skipped on re-runs. Empty leftover dirs are treated as not downloaded."""
+    if smb:
+        if not smbclient.path.exists(target):
+            return False
+        try:
+            entries = list(smbclient.scandir(target))
+        except Exception:
+            return False
+        return any(not e.is_dir() for e in entries)
+    if not os.path.isdir(target):
+        return False
+    return any(os.path.isfile(os.path.join(target, name)) for name in os.listdir(target))
+
+
 def run_album(photos, folder, exif_dt, out, workers, tz):
     """Run the 3-phase pipeline for one album into downloads/<folder>; returns
     the number of downloaded photos."""
@@ -315,13 +331,11 @@ def main():
             folder = f"{folder}_{album.album_id}"
         if smb:
             target = f"//{smb['SMB_HOST']}/{smb['SMB_SHARE']}/{folder}"
-            exists = smbclient.path.exists(target)
         else:
             target = os.path.join(args.out, folder)
-            exists = os.path.isdir(target)
-        if exists:
+        if target_has_files(target, bool(smb)):
             skipped += 1
-            print(f"   -> {folder} already exists; skipping")
+            print(f"   -> {folder} already downloaded; skipping")
             continue
         exif_dt = to_exif_dt(album.insert_datetime)
         print(
@@ -330,9 +344,9 @@ def main():
         )
         if exif_dt:
             print(f"   -> EXIF DateTimeOriginal {exif_dt} (tz {args.tz})")
-        local_dir = os.path.join(stage, folder) if stage else args.out
-        total += run_album(album.photos, folder, exif_dt, local_dir, args.workers, args.tz)
+        total += run_album(album.photos, folder, exif_dt, stage or args.out, args.workers, args.tz)
         if smb:
+            local_dir = os.path.join(stage, folder)
             try:
                 uploaded = smb_upload(local_dir, folder, smb)
                 print(f"   -> uploaded {uploaded} files to //{smb['SMB_HOST']}/{smb['SMB_SHARE']}/{folder}")
