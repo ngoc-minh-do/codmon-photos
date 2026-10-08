@@ -74,3 +74,18 @@ def test_stamp_exif(tmp_path):
     exif = piexif.load(str(path))
     assert exif["Exif"][piexif.ExifIFD.DateTimeOriginal] == b"2026:10:05 11:39:12"
     assert exif["Exif"][piexif.ExifIFD.OffsetTimeOriginal] == b"+09:00"
+
+
+def test_notification_body_single():
+    body = m.notification_body([("2026-10-05_〈０歳児〉9月の活動写真", 50)], 50, 0, "//nas/share")
+    assert body == "1 new album · 50 photos\n- 2026-10-05_〈０歳児〉9月の活動写真 (50)\n→ //nas/share"
+
+
+def test_notification_body_multiple_with_skips():
+    body = m.notification_body([("a", 50), ("b", 53)], 103, 9, "downloads")
+    lines = body.splitlines()
+    assert lines[0] == "2 new albums · 103 photos (9 already present)"
+    assert lines[1] == "- a (50)"
+    assert lines[2] == "- b (53)"
+    assert lines[3] == "→ downloads"
+    assert len(lines) == 4
