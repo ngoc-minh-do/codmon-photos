@@ -6,7 +6,7 @@ Download your child's nursery photo albums from
 Codmon exposes no public parent API, but the parent web app is an SPA that
 talks to an internal JSON API (`ps-api.codmon.com`) using session cookies from a
 plain email/password `POST /login`. This project uses that API directly with the
-Python standard library — **no browser, no saved `response.json`**.
+Python standard library — **no browser needed**.
 
 The integration is unofficial and can break if Codmon changes its API.
 
@@ -55,7 +55,6 @@ Options: `--date`, `--lookback` (default 45 days), `--out`, `--workers`,
 - `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline, albums)
 - `pyproject.toml` / `uv.lock` — uv-managed deps
 - `.env.example` — credentials template; copy to `.env`
-- `.opencode/skills/codmon-photos-to-nas/SKILL.md` — the opencode workflow skill
 - `downloads/<display_date>_<album_title>/` — where photos land
 
 ## Disclaimer / risk

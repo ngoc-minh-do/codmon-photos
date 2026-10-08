@@ -1,4 +1,4 @@
-"""Direct Codmon API client — no response.json required.
+"""Direct Codmon API client.
 
 Codmon exposes no public parent API, but parents.codmon.com is an SPA that
 talks to an internal JSON API (ps-api.codmon.com) using session cookies from a
