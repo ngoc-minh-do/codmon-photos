@@ -2,20 +2,25 @@
 
 ## Project
 
-Download photos from a Codmon API response JSON at the best resolution the CDN
-allows into `./downloads/<date>` (e.g. `downloads/2026-09-14`). The date comes
-from the response's `insert_datetime` (falls back to today). No upload step —
+Download photos from Codmon at the best resolution the CDN allows into
+`./downloads/<date>` (e.g. `downloads/2026-09-14`). The date comes from each
+photo album's `insert_datetime` / `display_date` (Tokyo time). No upload step —
 photos stay local. Recurring, roughly monthly task.
+
+The script logs directly into the Codmon parent API (`ps-api.codmon.com`,
+email/password session) — no browser, no pasted JSON. The same internal API
+conventions as the sibling `codmon-huckleberry-sync` project.
 
 ## How to run
 
 ```bash
-uv run scripts/codmon_sync.py <response.json>   # default: ./response.json
+cp .env.example .env   # fill CODMON_EMAIL / CODMON_PASSWORD (same creds as codmon-huckleberry-sync)
+uv sync                # first run: creates .venv, installs deps
+uv run scripts/codmon_sync.py               # scan last 45 days, download every album found
+uv run scripts/codmon_sync.py --date 2026-10-05   # one specific day
 ```
 
-First run: `uv sync` to create `.venv` and install deps.
-
-Options: `--date`, `--out`, `--workers`, `--tz` (EXIF timezone, default `+09:00`).
+Options: `--date`, `--lookback` (default 45 days), `--out`, `--workers`, `--tz`.
 
 The script is a 3-phase pipeline — never reimplement or re-test per photo:
 
@@ -42,19 +47,18 @@ is 500; omitting size params -> 403.
 
 ## Gotchas
 
-- Signed URLs expire in ~40 minutes. A 403 means the user must paste a NEW
-  response; do not retry or tweak the old URLs.
+- Signed URLs expire in ~40 minutes. A 403 during a run means re-run the script
+  (it re-fetches fresh URLs from the API); do not retry or tweak old URLs.
 - The user explicitly rejected per-photo best-resolution fetching. Calibration
   only.
 - The user rejected uploading to the NAS SMB share (`\\192.168.0.100\share`);
   downloads stay local under a dated folder.
-- `response.json` in the repo root holds the current API response; new ones get
-  pasted/moved here.
 
 ## Layout
 
-- `scripts/codmon_sync.py` — the pipeline (download to dated folder)
+- `scripts/codmon_sync.py` — the pipeline (login -> download to dated folder)
+- `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline)
 - `pyproject.toml` / `uv.lock` — uv-managed deps
+- `.env.example` — credentials template; copy to `.env`
 - `.opencode/skills/codmon-photos-to-nas/SKILL.md` — workflow skill
-- `response.json` — current API response
 - `downloads/<date>/` — where photos land
