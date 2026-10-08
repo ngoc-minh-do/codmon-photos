@@ -6,11 +6,14 @@ downloaded into ./downloads/<display_date>_<album_title>. See AGENTS.md for the
 calibration pipeline and CDN rules.
 """
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -226,6 +229,25 @@ def smb_upload(local_dir, folder, cfg):
     return uploaded
 
 
+def notify(url, title, body):
+    """POST an Apprise-style notification. Returns False when disabled or on
+    failure; never raises."""
+    url = (url or "").strip()
+    if not url:
+        return False
+    payload = json.dumps({"title": title, "body": body, "type": "success"}).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+        return True
+    except Exception as exc:
+        print(f"   -> Apprise notification failed: {exc}")
+        return False
+
+
 def target_has_files(target, smb):
     """True when the album dir exists and holds at least one file, so it can be
     skipped on re-runs. Empty leftover dirs are treated as not downloaded."""
@@ -361,6 +383,14 @@ def main():
             shutil.rmtree(stage)
     dest = f"//{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album>" if smb else f"{args.out}/"
     print(f"done: {total} photos across {len(albums)} album(s) ({skipped} skipped) -> {dest}")
+    if total > 0:
+        processed = len(albums) - skipped
+        body = f"{total} photos across {processed} album(s) {skipped} skipped -> {dest}"
+        notify(
+            os.environ.get("APPRISE_URL", ""),
+            "# 📷 codmon album photos",
+            body,
+        )
 
 
 if __name__ == "__main__":

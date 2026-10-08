@@ -47,7 +47,9 @@ uv run scripts/codmon_sync.py --lookback 220       # scan ~since March
 ```
 
 Options: `--date`, `--lookback` (default 45 days), `--out`, `--workers`,
-`--tz`. Run `uv run scripts/codmon_sync.py -h`.
+`--tz`. Set `APPRISE_URL` in `.env` to get a success notification after runs
+that actually downloaded/uploaded albums (all-skip runs stay silent). Run
+`uv run scripts/codmon_sync.py -h`.
 
 ## Layout
 
