@@ -230,6 +230,15 @@ def smb_upload(local_dir, folder, cfg):
     return uploaded
 
 
+def notification_body(downloaded, total, skipped, dest):
+    """Multi-line success message listing each newly downloaded album."""
+    header = f"{len(downloaded)} new album{'s' if len(downloaded) != 1 else ''} · {total} photos"
+    if skipped:
+        header += f" ({skipped} already present)"
+    lines = [header, *(f"- {name} ({count})" for name, count in downloaded), f"→ {dest}"]
+    return "\n".join(lines)
+
+
 def notify(url, title, body):
     """POST an Apprise-style notification. Returns False when disabled or on
     failure; never raises."""
@@ -359,8 +368,7 @@ def main():
             total_photos += len(album.photos)
             print(
                 f"   -> {folder}: {len(album.photos)} photos "
-                f"display={album.display_date} insert={album.insert_datetime}"
-                + (f" exif={exif_dt}" if exif_dt else "")
+                f"display={album.display_date} insert={album.insert_datetime}" + (f" exif={exif_dt}" if exif_dt else "")
             )
         print(f"done (dry run): would download {total_photos} photos across {len(albums)} album(s)")
         return
@@ -372,6 +380,7 @@ def main():
     )  # staging dir for SMB-mode downloads; removed after a successful upload
     total = 0
     skipped = 0
+    downloaded = []
     for album, folder in zip(albums, folders, strict=True):
         if name_counts[folder] > 1:
             folder = f"{folder}_{album.album_id}"
@@ -390,7 +399,9 @@ def main():
         )
         if exif_dt:
             print(f"   -> EXIF DateTimeOriginal {exif_dt} (tz {args.tz})")
-        total += run_album(album.photos, folder, exif_dt, stage or args.out, args.workers, args.tz)
+        count = run_album(album.photos, folder, exif_dt, stage or args.out, args.workers, args.tz)
+        total += count
+        downloaded.append((folder, count))
         if smb:
             local_dir = os.path.join(stage, folder)
             try:
@@ -405,15 +416,13 @@ def main():
             print(f"SMB upload incomplete; kept staged copies in {stage}: {leftovers}")
         else:
             shutil.rmtree(stage)
-    dest = f"//{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album>" if smb else f"{args.out}/"
+    dest = f"//{smb['SMB_HOST']}/{smb['SMB_SHARE']}" if smb else f"{args.out}"
     print(f"done: {total} photos across {len(albums)} album(s) ({skipped} skipped) -> {dest}")
-    if total > 0:
-        processed = len(albums) - skipped
-        body = f"{total} photos across {processed} album(s) {skipped} skipped -> {dest}"
+    if downloaded:
         notify(
             os.environ.get("APPRISE_URL", ""),
             "# 📷 codmon album photos",
-            body,
+            notification_body(downloaded, total, skipped, dest),
         )
 
 
