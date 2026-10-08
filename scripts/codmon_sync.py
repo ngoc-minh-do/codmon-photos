@@ -316,6 +316,12 @@ def main():
         help="timezone of insert_datetime, as EXIF OffsetTimeOriginal (default: +09:00 Tokyo)",
     )
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument(
+        "--dry-run",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="list the albums and photos that would be downloaded, without fetching or writing anything",
+    )
     args = ap.parse_args()
 
     load_dotenv()
@@ -342,6 +348,22 @@ def main():
     folders = [f"{a.display_date}_{safe_title(a.title)}" for a in albums]
     name_counts = Counter(folders)
     smb = smb_config(os.environ)
+    if args.dry_run:
+        dest = f"//{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album>" if smb else f"{args.out}/"
+        print(f"dry run -> would download to {dest}")
+        total_photos = 0
+        for album, folder in zip(albums, folders, strict=True):
+            if name_counts[folder] > 1:
+                folder = f"{folder}_{album.album_id}"
+            exif_dt = to_exif_dt(album.insert_datetime)
+            total_photos += len(album.photos)
+            print(
+                f"   -> {folder}: {len(album.photos)} photos "
+                f"display={album.display_date} insert={album.insert_datetime}"
+                + (f" exif={exif_dt}" if exif_dt else "")
+            )
+        print(f"done (dry run): would download {total_photos} photos across {len(albums)} album(s)")
+        return
     if smb:
         print(f"SMB mode -> uploading albums to //{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album> (no local copy)")
         smbclient.register_session(smb["SMB_HOST"], username=smb["SMB_USER"], password=smb["SMB_PASSWORD"])
