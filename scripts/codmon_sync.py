@@ -304,13 +304,25 @@ def main():
     smb = smb_config(os.environ)
     if smb:
         print(f"SMB mode -> uploading albums to //{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album> (no local copy)")
+        smbclient.register_session(smb["SMB_HOST"], username=smb["SMB_USER"], password=smb["SMB_PASSWORD"])
     stage = (
         tempfile.mkdtemp(prefix="codmon-") if smb else None
     )  # staging dir for SMB-mode downloads; removed after a successful upload
     total = 0
+    skipped = 0
     for album, folder in zip(albums, folders, strict=True):
         if name_counts[folder] > 1:
             folder = f"{folder}_{album.album_id}"
+        if smb:
+            target = f"//{smb['SMB_HOST']}/{smb['SMB_SHARE']}/{folder}"
+            exists = smbclient.path.exists(target)
+        else:
+            target = os.path.join(args.out, folder)
+            exists = os.path.isdir(target)
+        if exists:
+            skipped += 1
+            print(f"   -> {folder} already exists; skipping")
+            continue
         exif_dt = to_exif_dt(album.insert_datetime)
         print(
             f"album {album.album_id} {album.title!r} ({len(album.photos)} photos) "
@@ -334,7 +346,7 @@ def main():
         else:
             shutil.rmtree(stage)
     dest = f"//{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album>" if smb else f"{args.out}/"
-    print(f"done: {total} photos across {len(albums)} album(s) -> {dest}")
+    print(f"done: {total} photos across {len(albums)} album(s) ({skipped} skipped) -> {dest}")
 
 
 if __name__ == "__main__":
