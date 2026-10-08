@@ -25,8 +25,9 @@ The integration is unofficial and can break if Codmon changes its API.
    and `OffsetTimeOriginal` (default `+09:00` Tokyo) backfilled from the
    album's `insert_datetime`; without this, importers (Immich, Windows) date
    the photos at download time.
-5. **Mirror (optional)** — if `SMB_*` vars are set in `.env`, each album folder
-   is also copied to a NAS SMB share; the local copy is always kept.
+5. **Mirror (optional)** — if `SMB_*` vars are set in `.env`, each album is
+   uploaded to a NAS SMB share via a temp staging dir and **no local copy is
+   kept**; when they are unset, albums stay in `./downloads/`.
 
 ## Setup
 
@@ -50,7 +51,7 @@ Options: `--date`, `--lookback` (default 45 days), `--out`, `--workers`,
 
 ## Layout
 
-- `scripts/codmon_sync.py` — the pipeline (login → download to dated folder; optional SMB mirror)
+- `scripts/codmon_sync.py` — the pipeline (login → download to dated folder; SMB-only mode when configured)
 - `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline, albums)
 - `pyproject.toml` / `uv.lock` — uv-managed deps
 - `.env.example` — credentials template; copy to `.env`

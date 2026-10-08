@@ -9,6 +9,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -302,7 +303,10 @@ def main():
     name_counts = Counter(folders)
     smb = smb_config(os.environ)
     if smb:
-        print(f"SMB mirror enabled -> //{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album>")
+        print(f"SMB mode -> uploading albums to //{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album> (no local copy)")
+    stage = (
+        tempfile.mkdtemp(prefix="codmon-") if smb else None
+    )  # staging dir for SMB-mode downloads; removed after a successful upload
     total = 0
     for album, folder in zip(albums, folders, strict=True):
         if name_counts[folder] > 1:
@@ -314,15 +318,23 @@ def main():
         )
         if exif_dt:
             print(f"   -> EXIF DateTimeOriginal {exif_dt} (tz {args.tz})")
-        total += run_album(album.photos, folder, exif_dt, args.out, args.workers, args.tz)
+        local_dir = os.path.join(stage, folder) if stage else args.out
+        total += run_album(album.photos, folder, exif_dt, local_dir, args.workers, args.tz)
         if smb:
-            local = os.path.join(args.out, folder)
             try:
-                uploaded = smb_upload(local, folder, smb)
+                uploaded = smb_upload(local_dir, folder, smb)
                 print(f"   -> uploaded {uploaded} files to //{smb['SMB_HOST']}/{smb['SMB_SHARE']}/{folder}")
+                shutil.rmtree(local_dir)
             except Exception as exc:
-                print(f"   -> SMB upload FAILED for {folder}: {exc}")
-    print(f"done: {total} photos across {len(albums)} album(s) under {args.out}/")
+                print(f"   -> SMB upload FAILED for {folder}; kept staged at {local_dir}: {exc}")
+    if stage:
+        leftovers = [d for d in os.listdir(stage) if os.path.isdir(os.path.join(stage, d))]
+        if leftovers:
+            print(f"SMB upload incomplete; kept staged copies in {stage}: {leftovers}")
+        else:
+            shutil.rmtree(stage)
+    dest = f"//{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album>" if smb else f"{args.out}/"
+    print(f"done: {total} photos across {len(albums)} album(s) -> {dest}")
 
 
 if __name__ == "__main__":
