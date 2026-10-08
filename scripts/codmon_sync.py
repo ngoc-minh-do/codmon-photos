@@ -7,6 +7,7 @@ calibration pipeline and CDN rules.
 """
 import argparse
 import os
+import shutil
 import subprocess
 import time
 from collections import Counter
@@ -15,6 +16,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import piexif
+import smbclient
 from codmon_api import CodmonClient, CodmonError
 from dotenv import load_dotenv
 
@@ -188,6 +190,41 @@ def safe_title(title):
     return name or "album"
 
 
+SMB_ENV = ("SMB_HOST", "SMB_SHARE", "SMB_USER", "SMB_PASSWORD")
+
+
+def smb_config(cfg):
+    """Resolve the SMB_* env vars. Returns {host, share, user, password} or
+    None when none are set. Errors out if only some are set."""
+    values = {key: cfg.get(key, "").strip() for key in SMB_ENV}
+    if not any(values.values()):
+        return None
+    missing = [key for key, value in values.items() if not value]
+    if missing:
+        raise SystemExit(
+            f"SMB_* partially configured; missing {', '.join(missing)} "
+            "(set all four in .env or leave all unset to skip uploads)"
+        )
+    return values
+
+
+def smb_upload(local_dir, folder, cfg):
+    """Mirror an album folder to //HOST/SHARE/<folder>, preserving local copy."""
+    host = cfg["SMB_HOST"]
+    target = f"//{host}/{cfg['SMB_SHARE']}/{folder}"
+    smbclient.register_session(host, username=cfg["SMB_USER"], password=cfg["SMB_PASSWORD"])
+    smbclient.makedirs(target, exist_ok=True)
+    uploaded = 0
+    for name in sorted(os.listdir(local_dir)):
+        local = os.path.join(local_dir, name)
+        if not os.path.isfile(local):
+            continue
+        with open(local, "rb") as src, smbclient.open_file(f"{target}/{name}", "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        uploaded += 1
+    return uploaded
+
+
 def run_album(photos, folder, exif_dt, out, workers, tz):
     """Run the 3-phase pipeline for one album into downloads/<folder>; returns
     the number of downloaded photos."""
@@ -263,6 +300,9 @@ def main():
 
     folders = [f"{a.display_date}_{safe_title(a.title)}" for a in albums]
     name_counts = Counter(folders)
+    smb = smb_config(os.environ)
+    if smb:
+        print(f"SMB mirror enabled -> //{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album>")
     total = 0
     for album, folder in zip(albums, folders, strict=True):
         if name_counts[folder] > 1:
@@ -275,6 +315,13 @@ def main():
         if exif_dt:
             print(f"   -> EXIF DateTimeOriginal {exif_dt} (tz {args.tz})")
         total += run_album(album.photos, folder, exif_dt, args.out, args.workers, args.tz)
+        if smb:
+            local = os.path.join(args.out, folder)
+            try:
+                uploaded = smb_upload(local, folder, smb)
+                print(f"   -> uploaded {uploaded} files to //{smb['SMB_HOST']}/{smb['SMB_SHARE']}/{folder}")
+            except Exception as exc:
+                print(f"   -> SMB upload FAILED for {folder}: {exc}")
     print(f"done: {total} photos across {len(albums)} album(s) under {args.out}/")
 
 
