@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Download Codmon photo albums at the best resolution the CDN allows.
 
-Albums are fetched straight from the Codmon parent API (no response.json) and
+Albums are fetched straight from the Codmon parent API and
 downloaded into ./downloads/<display_date>_<album_title>. See AGENTS.md for the
 calibration pipeline and CDN rules.
 """

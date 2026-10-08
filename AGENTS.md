@@ -66,5 +66,4 @@ is 500; omitting size params -> 403.
 - `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline)
 - `pyproject.toml` / `uv.lock` — uv-managed deps
 - `.env.example` — credentials template; copy to `.env`
-- `.opencode/skills/codmon-photos-to-nas/SKILL.md` — workflow skill
 - `downloads/<date>_<title>/` — where photos land (when SMB is not configured)
