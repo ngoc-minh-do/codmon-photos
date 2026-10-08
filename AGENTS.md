@@ -7,8 +7,8 @@ Download photos from Codmon at the best resolution the CDN allows into
 a `_<album_id>` suffix is added only when two albums share the same date+title).
 The date comes from each photo album's `insert_datetime` / `display_date`
 (Tokyo time). Downloads stay local; if `SMB_HOST`/`SMB_SHARE`/`SMB_USER`/`SMB_PASSWORD`
-are set in `.env`, each album folder is also mirrored to the SMB share
-(`\\<host>\<share>\<album>`). Recurring, roughly monthly task.
+are set in `.env`, albums go **only** to the SMB share (`\\<host>\<share>\<album>`)
+via a temp staging dir — no local copy. Recurring, roughly monthly task.
 
 The script logs directly into the Codmon parent API (`ps-api.codmon.com`,
 email/password session) — no browser, no pasted JSON. The same internal API
@@ -53,17 +53,18 @@ is 500; omitting size params -> 403.
 
 - Signed URLs expire in ~40 minutes. A 403 during a run means re-run the script
   (it re-fetches fresh URLs from the API); do not retry or tweak old URLs.
-- The user previously rejected always-on NAS upload, then asked for an **optional**
-  SMB mirror (enabled only when all `SMB_*` vars are set in `.env`). Local
-  `downloads/` is always kept; the share is an additional copy.
+- The user previously rejected always-on NAS upload, later asked for an **optional**
+  SMB target (enabled only when all `SMB_*` vars are set in `.env`), and then
+  changed it to: when SMB is enabled the album goes **only** to the share (no
+  local copy); when unset, downloads stay local under `downloads/`.
 - The user explicitly rejected per-photo best-resolution fetching. Calibration
   only.
 
 ## Layout
 
-- `scripts/codmon_sync.py` — the pipeline (login -> download to dated folder; optional SMB mirror)
+- `scripts/codmon_sync.py` — the pipeline (login -> download to dated folder; SMB-only mode when configured)
 - `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline)
 - `pyproject.toml` / `uv.lock` — uv-managed deps
 - `.env.example` — credentials template; copy to `.env`
 - `.opencode/skills/codmon-photos-to-nas/SKILL.md` — workflow skill
-- `downloads/<date>_<title>/` — where photos land
+- `downloads/<date>_<title>/` — where photos land (when SMB is not configured)
