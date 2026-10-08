@@ -1,5 +1,7 @@
 # codmon-photos
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Download your child's nursery photo albums from
 [Codmon](https://parents.codmon.com/) at the best resolution its CDN allows.
 
@@ -66,3 +68,12 @@ that actually downloaded/uploaded albums (all-skip runs stay silent). Run
 - Signed photo URLs expire in ~40 minutes; a 403 mid-run just means re-run the
   script (it re-fetches fresh URLs).
 - Credentials live only in `.env`, which is git-ignored.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues privately per
+[SECURITY.md](SECURITY.md) — never as a public issue.
+
+## License
+
+[MIT](LICENSE) — © 2026 Ngoc Do
