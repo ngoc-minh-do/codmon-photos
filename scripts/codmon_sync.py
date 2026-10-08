@@ -14,8 +14,13 @@ Pipeline (does not search best resolution on every photo):
      that yields the larger image for each orientation. Single-orientation
      albums calibrate the present orientation and assume the default combo for
      the missing one.
-  3. Download: fetch every photo once, using the calibrated best combo for its
-     orientation.
+3. Download: fetch every photo once, using the calibrated best combo for its
+      orientation.
+
+The CDN strips all EXIF on re-encode, so after download each photo is stamped
+with DateTimeOriginal + OffsetTimeOriginal from the album's insert_datetime
+(Tokyo time by default) so apps (Windows Explorer, Immich, ...) show the right
+capture date.
 
 Background / best-resolution rules (from live probing):
   - Photo base URLs are signed CloudFront URLs; the *width*/*height* query
@@ -37,10 +42,13 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import piexif
+
 MAX_AXIS = 500
 COMBO_H = f"&width=0&height={MAX_AXIS}"  # landscape best candidate
 COMBO_W = f"&width={MAX_AXIS}&height=0"  # portrait best candidate
 PROBE = f"&width=10&height=0"
+DEFAULT_TZ = "+09:00"  # insert_datetime is Tokyo time
 
 
 def jpeg_dim(data):
@@ -163,7 +171,7 @@ def plan_names(entries):
     return out, dups
 
 
-def download_one(task, combo, outdir):
+def download_one(task, combo, outdir, exif_dt, tz):
     pid, url, final = task
     base = best_url(url)
     d = fetch(base + combo)
@@ -173,28 +181,47 @@ def download_one(task, combo, outdir):
     path = os.path.join(outdir, final)
     with open(path, "wb") as f:
         f.write(d)
+    if exif_dt:
+        stamp_exif(path, exif_dt, tz)
     return pid, f"{dim[0]}x{dim[1]}" if dim else "?", len(d), path
 
 
-def insert_date(path):
-    """Date (YYYY-MM-DD) from the first photo's insert_datetime, else today."""
+def find_insert_datetime(data):
+    """Raw 'YYYY-MM-DD HH:MM:SS' of the first insert_datetime found, else None."""
     def walk(obj):
         if isinstance(obj, dict):
             v = obj.get("insert_datetime")
-            if isinstance(v, str) and len(v) >= 10 and v[4] == v[7] == "-":
-                return v[:10]
+            if isinstance(v, str):
+                return v
             for value in obj.values():
-                d = walk(value)
-                if d:
-                    return d
+                r = walk(value)
+                if r:
+                    return r
         elif isinstance(obj, list):
             for value in obj:
-                d = walk(value)
-                if d:
-                    return d
+                r = walk(value)
+                if r:
+                    return r
         return None
-    date = walk(json.load(open(path)))
-    return date or time.strftime("%Y-%m-%d")
+    return walk(data)
+
+
+def stamp_exif(path, dt, tz):
+    """Embed DateTimeOriginal (+OffsetTimeOriginal) into the saved JPEG so
+    apps that export/sub-group by capture date (Immich, Windows Explorer, ...)
+    show the album's insert_datetime instead of the download time."""
+    exif = {
+        "0th": {},
+        "Exif": {
+            piexif.ExifIFD.DateTimeOriginal: dt,
+            piexif.ExifIFD.DateTimeDigitized: dt,
+            piexif.ExifIFD.OffsetTimeOriginal: tz,
+        },
+        "GPS": {},
+        "Interop": {},
+        "1st": {},
+    }
+    piexif.insert(piexif.dump(exif), path)
 
 
 def main():
@@ -203,11 +230,22 @@ def main():
     ap.add_argument("--out", default="downloads")
     ap.add_argument("--date", default=None,
                     help="YYYY-MM-DD; default is the response's insert_datetime")
+    ap.add_argument("--tz", default=DEFAULT_TZ,
+                    help="timezone of insert_datetime, as EXIF OffsetTimeOriginal (default: +09:00 Tokyo)")
     ap.add_argument("--workers", type=int, default=4)
     args = ap.parse_args()
 
-    date = args.date or insert_date(args.response_json)
-    photos = collect_photos(json.load(open(args.response_json)), [])
+    data = json.load(open(args.response_json))
+    raw_dt = find_insert_datetime(data)
+    if raw_dt and len(raw_dt) >= 10:
+        date = args.date or raw_dt[:10]
+        exif_dt = raw_dt.replace("-", ":", 2)
+        print(f"insert_datetime: {raw_dt} (tz {args.tz}) -> EXIF DateTimeOriginal {exif_dt}")
+    else:
+        date = args.date or time.strftime("%Y-%m-%d")
+        exif_dt = None
+
+    photos = collect_photos(data, [])
     if not photos:
         raise SystemExit("no Codmon photo URLs found in the JSON")
     outdir = os.path.join(args.out, date)
@@ -229,7 +267,7 @@ def main():
     ok = 0
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         for pid, dim, nbytes, path in ex.map(
-            lambda t: download_one(t[0], t[1], outdir), tasks
+            lambda t: download_one(t[0], t[1], outdir, exif_dt, args.tz), tasks
         ):
             print(f"{'OK' if path else 'FAIL'} {dim} {nbytes // 1024 if nbytes else 0}k {os.path.basename(path) if path else pid}")
             if path:

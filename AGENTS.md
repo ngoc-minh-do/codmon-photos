@@ -15,7 +15,7 @@ uv run scripts/codmon_sync.py <response.json>   # default: ./response.json
 
 First run: `uv sync` to create `.venv` and install deps.
 
-Options: `--date`, `--out`, `--workers`.
+Options: `--date`, `--out`, `--workers`, `--tz` (EXIF timezone, default `+09:00`).
 
 The script is a 3-phase pipeline — never reimplement or re-test per photo:
 
@@ -26,7 +26,10 @@ The script is a 3-phase pipeline — never reimplement or re-test per photo:
    single-orientation (e.g. all landscape), calibrate what exists and assume the
    default combo for the missing orientation.
 3. **Download** — fetch every photo exactly once at the calibrated combo into
-   `./downloads/<date>`.
+   `./downloads/<date>`, then embed the album's `insert_datetime` as EXIF
+   `DateTimeOriginal` + `OffsetTimeOriginal` (Tokyo +09:00) into each JPEG —
+   the CDN strips all EXIF, so without this step importers (Immich, Windows)
+   would date the photos at download time.
 
 Combo rule: constrain the axis that is SMALLER in the photo's aspect so the auto
 side exceeds the 500 cap (landscape -> `&width=0&height=500` ~667x500/750x500/
