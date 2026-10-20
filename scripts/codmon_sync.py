@@ -421,7 +421,7 @@ def main():
     if downloaded:
         notify(
             os.environ.get("APPRISE_URL", ""),
-            "# 📷 codmon album photos",
+            "# 👍 codmon photos ok",
             notification_body(downloaded, total, skipped, dest),
         )
 
