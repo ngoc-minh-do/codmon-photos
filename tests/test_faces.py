@@ -355,3 +355,97 @@ def test_enroll_guard_is_per_detector(tmp_path):
     add_ref(db, person="kid", pipeline=OTHER_PIPE)
     assert face_filter.enrolled_pipelines(db, "kid", "scrfd") == [OTHER_PIPE]
     assert face_filter.enrolled_pipelines(db, "someoneelse", "yunet") == []
+
+
+def _enroll_fixture(tmp_path, monkeypatch):
+    """Two photos: one with a single face, one with a big impostor + the real face."""
+    import cv2
+
+    refs = tmp_path / "refs" / "kid" / "face"
+    refs.mkdir(parents=True)
+    real = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    impostor = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+
+    for name, colour in (("single.jpg", (10, 10, 10)), ("group.jpg", (20, 20, 20))):
+        cv2.imwrite(str(refs / name), np.full((64, 64, 3), colour, dtype=np.uint8))
+
+    def fake_detect(img, det, min_width=20):
+        if int(img[0, 0, 0]) == 10:  # single.jpg
+            return [((0, 0, 50, 50), np.array([[1.0, 1.0]] * 5), 0.9)]
+        # group.jpg: the impostor is bigger, so "largest face" would pick it
+        return [
+            ((0, 0, 60, 60), np.array([[9.0, 9.0]] * 5), 0.8),
+            ((0, 0, 20, 20), np.array([[1.0, 1.0]] * 5), 0.7),
+        ]
+
+    def fake_embed(img, kps, rec):
+        return real if kps[0][0] == 1.0 else impostor  # landmark x picks the identity
+
+    monkeypatch.setattr(faces, "detect", fake_detect)
+    monkeypatch.setattr(faces, "embed", fake_embed)
+    monkeypatch.setattr(faces, "align", lambda img, kps, size=112: np.zeros((size, size, 3), np.uint8))
+    return refs
+
+
+def test_enroll_prefers_the_face_matching_the_gallery_over_the_largest(tmp_path, monkeypatch):
+    refs = _enroll_fixture(tmp_path, monkeypatch)
+    db = faces.open_db(tmp_path / "faces.db")
+    det = types.SimpleNamespace(name="yunet", score=0.6, faces=lambda img: [])
+
+    warnings = faces.enroll(db, "kid", refs, det, None, tmp_path / ".cache")
+
+    embs = [np.frombuffer(r[0], dtype=np.float32) for r in db.execute("SELECT emb FROM refs ORDER BY source")]
+    assert len(embs) == 2
+    assert all(np.allclose(e, [1.0, 0.0, 0.0]) for e in embs), "the 60px impostor must not be enrolled"
+    assert any("matching the gallery" in w for w in warnings)
+
+
+def test_enroll_bootstraps_from_the_largest_face_then_flags_disagreement(tmp_path, monkeypatch):
+    """With no single-face photo, the largest seeds the gallery; a total mismatch is skipped."""
+    import cv2
+
+    refs = tmp_path / "refs" / "kid" / "face"
+    refs.mkdir(parents=True)
+    for name in ("a.jpg", "b.jpg"):
+        cv2.imwrite(str(refs / name), np.zeros((32, 32, 3), dtype=np.uint8))
+
+    faces_for_calls = iter(
+        [
+            [((0, 0, 60, 60), np.array([[9.0, 9.0]] * 5), 0.8), ((0, 0, 20, 20), np.array([[1.0, 1.0]] * 5), 0.7)],
+            [((0, 0, 30, 30), np.array([[2.0, 2.0]] * 5), 0.9), ((0, 0, 25, 25), np.array([[3.0, 3.0]] * 5), 0.9)],
+        ]
+    )
+    monkeypatch.setattr(faces, "detect", lambda img, det, min_width=20: next(faces_for_calls))
+
+    def embed_by_identity(img, kps, rec):
+        # face x=9 is the bootstrap kid, x=2/3 belong to someone else (orthogonal)
+        return np.array([0.0, 1.0, 0.0] if kps[0][0] == 9.0 else [1.0, 0.0, 0.0], np.float32)
+
+    monkeypatch.setattr(faces, "embed", embed_by_identity)
+    monkeypatch.setattr(faces, "align", lambda img, kps, size=112: np.zeros((size, size, 3), np.uint8))
+    db = faces.open_db(tmp_path / "faces.db")
+    det = types.SimpleNamespace(name="yunet", score=0.6, faces=lambda img: [])
+
+    warnings = faces.enroll(db, "kid", refs, det, None, tmp_path / ".cache")
+
+    assert any("no gallery yet" in w for w in warnings)
+    assert any("no face there resembles the others" in w for w in warnings)
+    assert db.execute("SELECT COUNT(*) FROM refs").fetchone() == (1,)
+
+
+def test_re_enroll_leaves_no_stale_crop_files(tmp_path, monkeypatch):
+    refs = _enroll_fixture(tmp_path, monkeypatch)
+    db = faces.open_db(tmp_path / "faces.db")
+    det = types.SimpleNamespace(name="yunet", score=0.6, faces=lambda img: [])
+    crop_root = tmp_path / ".cache"
+
+    faces.enroll(db, "kid", refs, det, None, crop_root)
+    first = sorted(p.name for p in (crop_root / "kid" / "yunet").iterdir())
+    assert len(first) == 2
+
+    (refs / "group.jpg").unlink()  # fewer references the second time around
+    faces.enroll(db, "kid", refs, det, None, crop_root)
+    second = sorted(p.name for p in (crop_root / "kid" / "yunet").iterdir())
+
+    assert len(second) == 1, f"stale crops survived: {second}"
+    assert second == ["00_single.jpg"]
