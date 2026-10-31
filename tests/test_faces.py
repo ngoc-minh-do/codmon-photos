@@ -1,4 +1,6 @@
+import pathlib
 import sqlite3
+import types
 
 import faces
 import numpy as np
@@ -10,9 +12,16 @@ def unit(*values):
     return vec / np.linalg.norm(vec)
 
 
-def add_ref(db, person="kid", emb=None):
+PIPE = "v2:yunet:w600k_r50.onnx:arc112:floor20"
+OTHER_PIPE = "v2:scrfd:w600k_r50.onnx:arc112:floor20"
+
+
+def add_ref(db, person="kid", emb=None, pipeline=PIPE):
     emb = unit(1, 0, 0) if emb is None else emb
-    db.execute("INSERT INTO refs (person, source, crop, emb) VALUES (?,?,?,?)", (person, "s", "c", emb.tobytes()))
+    db.execute(
+        "INSERT INTO refs (person, pipeline, source, crop, emb) VALUES (?,?,?,?,?)",
+        (person, pipeline, "s", "c", emb.tobytes()),
+    )
 
 
 def test_band_of_boundaries():
@@ -116,8 +125,8 @@ def test_score_faces_picks_best_face_and_reference():
 def test_store_and_load_faces_roundtrip(tmp_path):
     db = faces.open_db(tmp_path / "faces.db")
     emb = np.arange(8, dtype=np.float32) / 10
-    faces.store_photo(db, "abc", (750, 500), "w600k_r50", [((1.0, 2.0, 33.0, 44.0), 0.91, emb)])
-    loaded = faces.load_faces(db, "abc")
+    faces.store_photo(db, "abc", (750, 500), PIPE, [((1.0, 2.0, 33.0, 44.0), 0.91, emb)])
+    loaded = faces.load_faces(db, "abc", PIPE)
     assert len(loaded) == 1
     assert loaded[0][0] == (1.0, 2.0, 33.0, 44.0)
     assert loaded[0][1] == 0.91
@@ -131,11 +140,11 @@ def test_cache_is_keyed_by_content_not_path(tmp_path):
     two.write_bytes(b"\xff\xd8same")
     db = faces.open_db(tmp_path / "faces.db")
     sha1 = faces.file_sha1(one)
-    faces.store_photo(db, sha1, (10, 10), "w600k_r50", [])
-    assert faces.cached_photo(db, faces.file_sha1(two), "w600k_r50"), "same bytes must hit the cache"
-    assert not faces.cached_photo(db, sha1, "other-model")
+    faces.store_photo(db, sha1, (10, 10), PIPE, [])
+    assert faces.cached_photo(db, faces.file_sha1(two), PIPE), "same bytes must hit the cache"
+    assert not faces.cached_photo(db, sha1, OTHER_PIPE), "another detector is a different cache slot"
     two.write_bytes(b"\xff\xd8differs")
-    assert not faces.cached_photo(db, faces.file_sha1(two), "w600k_r50")
+    assert not faces.cached_photo(db, faces.file_sha1(two), PIPE)
 
 
 def test_collect_scores_albums_from_the_cache(tmp_path):
@@ -146,10 +155,10 @@ def test_collect_scores_albums_from_the_cache(tmp_path):
     other.write_bytes(b"\xff\xd8other")
     db = faces.open_db(tmp_path / "faces.db")
     add_ref(db)
-    faces.store_photo(db, faces.file_sha1(her), (750, 500), "w600k_r50", [((0, 0, 60, 60), 0.9, unit(1, 0, 0))])
-    faces.store_photo(db, faces.file_sha1(other), (750, 500), "w600k_r50", [((0, 0, 30, 30), 0.9, unit(0, 1, 0))])
+    faces.store_photo(db, faces.file_sha1(her), (750, 500), PIPE, [((0, 0, 60, 60), 0.9, unit(1, 0, 0))])
+    faces.store_photo(db, faces.file_sha1(other), (750, 500), PIPE, [((0, 0, 30, 30), 0.9, unit(0, 1, 0))])
 
-    rows = faces.collect(db, "kid", [tmp_path / "downloads"], min_face=40)
+    rows = faces.collect(db, "kid", [tmp_path / "downloads"], min_face=40, pipeline=PIPE)
 
     by_name = {r["path"].name: r for r in rows}
     assert by_name["her.jpg"]["score"] == pytest.approx(1.0)
@@ -162,7 +171,7 @@ def test_collect_scores_albums_from_the_cache(tmp_path):
 def test_gallery_requires_references(tmp_path):
     db = faces.open_db(tmp_path / "faces.db")
     with pytest.raises(SystemExit, match="enroll"):
-        faces.gallery(db, "nobody")
+        faces.gallery(db, "nobody", PIPE)
 
 
 def test_open_db_is_idempotent(tmp_path):
@@ -170,3 +179,116 @@ def test_open_db_is_idempotent(tmp_path):
     faces.open_db(path).close()
     db = sqlite3.connect(path)
     assert db.execute("SELECT COUNT(*) FROM photos").fetchone() == (0,)
+
+
+def test_pipeline_id_separates_detectors_and_floor():
+    yunet = types.SimpleNamespace(name="yunet")
+    scrfd = types.SimpleNamespace(name="scrfd")
+    assert faces.pipeline_id(yunet) != faces.pipeline_id(scrfd)
+    assert faces.pipeline_id(yunet, floor=20) != faces.pipeline_id(yunet, floor=40)
+    assert faces.pipeline_id(yunet) == PIPE
+    assert faces.detector_of(faces.pipeline_id(scrfd)) == "scrfd"
+
+
+def test_two_pipelines_coexist_for_the_same_photo(tmp_path):
+    photo = tmp_path / "a.jpg"
+    photo.write_bytes(b"\xff\xd8x")
+    sha1 = faces.file_sha1(photo)
+    db = faces.open_db(tmp_path / "faces.db")
+    faces.store_photo(db, sha1, (750, 500), PIPE, [((0, 0, 40, 40), 0.9, unit(1, 0, 0))])
+    faces.store_photo(db, sha1, (750, 500), OTHER_PIPE, [((0, 0, 40, 40), 0.8, unit(0, 0.6, 0.8))])
+
+    assert faces.cached_photo(db, sha1, PIPE) and faces.cached_photo(db, sha1, OTHER_PIPE)
+    assert sorted(faces.pipelines(db)) == sorted([PIPE, OTHER_PIPE])
+    assert np.allclose(faces.load_faces(db, sha1, PIPE)[0][2], unit(1, 0, 0))
+    assert np.allclose(faces.load_faces(db, sha1, OTHER_PIPE)[0][2], unit(0, 0.6, 0.8))
+
+
+def test_pipeline_for_finds_the_cached_id_else_predicts_one(tmp_path):
+    db = faces.open_db(tmp_path / "faces.db")
+    faces.store_photo(db, "abc", (10, 10), PIPE, [])
+    assert faces.pipeline_for(db, "yunet") == PIPE
+    assert faces.pipeline_for(db, "scrfd").startswith("v2:scrfd:")
+
+
+def test_compare_counts_agreement_and_only_buckets(tmp_path):
+    album = tmp_path / "album"
+    album.mkdir()
+    names = ["both.jpg", "both2.jpg", "a.jpg", "b.jpg", "none.jpg"]
+
+    def rows(pipeline, scores):
+        return [
+            {
+                "album": "album",
+                "path": album / n,
+                "score": s,
+                "faces": f,
+                "face_width": 50.0,
+                "pipeline": pipeline,
+                "root": tmp_path,
+            }
+            for n, (s, f) in zip(names, scores, strict=True)
+        ]
+
+    a = rows(PIPE, [(0.60, 1), (0.70, 1), (0.55, 1), (0.10, 1), (0.0, 0)])
+    b = rows(OTHER_PIPE, [(0.50, 1), (0.40, 1), (0.20, 1), (0.65, 1), (0.0, 0)])
+    stats = faces.compare({PIPE: a, OTHER_PIPE: b}, 0.45)
+
+    assert stats["shared"] == 5
+    # both.jpg hit by both, both2.jpg and a.jpg only by the first, b.jpg only by the second
+    assert (stats["both"], stats["only_a"], stats["only_b"], stats["neither"]) == (1, 2, 1, 1)
+    assert stats["deltas"].round(2).tolist() == [-0.10]
+
+
+def test_disagreements_lists_the_split_photos():
+    album = pathlib.Path("/albums/x")
+    a = [{"album": "x", "path": album / "one.jpg", "score": 0.60, "faces": 1, "face_width": 80.0, "pipeline": PIPE}]
+    b = [
+        {"album": "x", "path": album / "one.jpg", "score": 0.20, "faces": 0, "face_width": 0.0, "pipeline": OTHER_PIPE}
+    ]
+    found = faces.disagreements({PIPE: a, OTHER_PIPE: b}, 0.45)
+    assert len(found) == 1
+    assert found[0]["winner"] == PIPE
+    assert found[0]["width_delta"] == -80.0
+    assert "yunet" in faces.compare_report(faces.compare({PIPE: a, OTHER_PIPE: b}, 0.45), found, 0.45)
+
+
+def test_scrfd_decode_helpers():
+    centres = faces.scrfd_anchors(2, 2, 8, num_anchors=1)
+    assert centres.tolist() == [[0, 0], [8, 0], [0, 8], [8, 8]]
+    assert faces.scrfd_anchors(1, 1, 8, num_anchors=2).tolist() == [[0, 0], [0, 0]]
+
+    boxes = faces.distance2bbox(np.array([[10.0, 10.0]]), np.array([[2.0, 3.0, 4.0, 5.0]]))
+    assert boxes.tolist() == [[8.0, 7.0, 14.0, 15.0]]
+
+    kps = faces.distance2kps(np.array([[10.0, 10.0]]), np.array([[1.0, 2.0, 3.0, 4.0]]))
+    assert kps.tolist() == [[11.0, 12.0, 13.0, 14.0]]
+
+    dets = np.array([[0, 0, 10, 10, 0.9], [1, 1, 11, 11, 0.8], [50, 50, 60, 60, 0.7]], dtype=np.float32)
+    assert faces.nms(dets, 0.4) == [0, 2]
+
+
+def test_scan_skips_files_that_vanished(tmp_path, monkeypatch):
+    import cv2
+
+    root = tmp_path / "downloads" / "album"
+    root.mkdir(parents=True)
+    keep, doomed = root / "keep.jpg", root / "doomed.jpg"
+    cv2.imwrite(str(keep), np.zeros((32, 32, 3), dtype=np.uint8))
+    cv2.imwrite(str(doomed), np.zeros((32, 32, 3), dtype=np.uint8))
+    db = faces.open_db(tmp_path / "faces.db")
+
+    real_sha1 = faces.file_sha1
+
+    def sha1_or_race(path):
+        if path.name == "doomed.jpg":
+            raise FileNotFoundError(path)  # deleted/renamed mid-scan
+        return real_sha1(path)
+
+    monkeypatch.setattr(faces, "file_sha1", sha1_or_race)
+    stub = types.SimpleNamespace(name="stub", faces=lambda img: [])
+
+    done, skipped = faces.scan(db, [tmp_path / "downloads"], stub, None, floor=20)
+
+    assert (done, skipped) == (1, 0)
+    assert faces.cached_photo(db, real_sha1(keep), faces.pipeline_id(stub, 20))

@@ -69,6 +69,19 @@ uv run scripts/face_filter.py export <name> --threshold 0.50 --yes
 uv run scripts/face_filter.py upload <name> --yes   # optional: mirror to the NAS
 ```
 
+Two detectors are available: `--detector yunet` (default, finds more of the tiny
+faces a 500px CDN photo leaves behind) and `--detector scrfd` (buffalo_l's
+`det_10g`). Scans are cached per detector, so both can be run and compared:
+
+```bash
+uv run scripts/face_filter.py scan --detector yunet
+uv run scripts/face_filter.py scan --detector scrfd
+uv run scripts/face_filter.py compare <name> --threshold 0.45
+```
+
+`compare` reports how many photos both detectors keep, how many only one does,
+and the score delta on the photos both catch.
+
 `report` writes a self-contained `.cache/report-<name>.html` with every photo,
 its best similarity score and the matched face crop, so the cutoff can be picked
 by looking rather than guessing. `export` **copies** matching photos to

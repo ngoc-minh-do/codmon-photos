@@ -63,6 +63,7 @@ uv run scripts/face_filter.py scan                    # detect + embed every pho
 uv run scripts/face_filter.py report <name>            # sweep + .cache/report-<name>.html
 uv run scripts/face_filter.py export <name> --threshold 0.50 --yes
 uv run scripts/face_filter.py upload <name> --yes      # optional: mirror to the NAS
+uv run scripts/face_filter.py compare <name> --threshold 0.45   # yunet vs scrfd
 ```
 
 Rules:
@@ -76,10 +77,20 @@ Rules:
 - Enrollment takes the largest face in each reference and prints a warning for a
   multi-face photo, a face under 64px, or a reference that is <0.35 similar to
   the others (probably not her).
-- Pipeline: YuNet (detect + 5 landmarks) -> ArcFace `w600k_r50` (align to the
-  112x112 template, 512-d embedding) -> cosine against the reference gallery.
-  Detection and recognition are separate ONNX stages; the embedding model is the
+- Pipeline: detector (5 landmarks) -> ArcFace `w600k_r50` (align to the 112x112
+  template, 512-d embedding) -> cosine against the reference gallery. Detection
+  and recognition are separate ONNX stages; the embedding model is the
   recognition half of InsightFace's buffalo_l.
+- Two detectors: `yunet` (default) and `scrfd` (`det_10g`, buffalo_l's). Cache
+  keys carry the full pipeline id (`v2:<detector>:w600k_r50.onnx:arc112:floor20`),
+  so each detector keeps its own rows for the same photo and a changed component
+  never reuses stale vectors. Bump `PIPELINE_VERSION` when stored vectors would
+  change for identical inputs.
+- Measured on 670 photos at threshold 0.45: both detectors agree on 53 photos,
+  YuNet alone finds 23, SCRFD alone 7 — YuNet wins on recall because it keeps
+  faces SCRFD drops at ~30px. Where both see the face the scores agree closely
+  (median delta 0.01, p10-p90 -0.04..+0.06), so the choice is about detection,
+  not the embedding. `compare` prints this table.
 - Cache rows are keyed by file sha1, not path, so the same photo is embedded once
   wherever it appears (album, staging dir, re-download). Every face down to 20px
   is cached, so `--threshold` and `--min-face` are pure re-scoring: never re-run

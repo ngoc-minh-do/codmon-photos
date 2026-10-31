@@ -55,26 +55,44 @@ def build_parser() -> argparse.ArgumentParser:
         default=faces.DEFAULT_MIN_FACE,
         help=f"ignore faces narrower than this (default {faces.DEFAULT_MIN_FACE}px)",
     )
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--detector",
+        choices=faces.DETECTORS,
+        default=faces.YUNET,
+        help=f"face detector to use; scans are cached per detector (default: {faces.YUNET})",
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("enroll", help="embed refs/<name>/face/*.jpg into the gallery")
+    p = sub.add_parser("enroll", parents=[common], help="embed refs/<name>/face/*.jpg into the gallery")
     p.add_argument("person")
     p.add_argument("--force", action="store_true", help="re-enroll even if references already exist")
 
-    sub.add_parser("scan", help="detect + embed every photo (cached by content; skips known files)")
+    sub.add_parser("scan", parents=[common], help="detect + embed every photo (cached per content+detector)")
 
-    p = sub.add_parser("report", help="write .cache/report-<name>.html and print the threshold sweep")
+    p = sub.add_parser("report", parents=[common], help="write .cache/report-<name>.html and print the threshold sweep")
     p.add_argument("person")
     p.add_argument("--threshold", type=float, default=faces.DEFAULT_THRESHOLD)
     p.add_argument("--out", type=Path, default=None)
 
-    p = sub.add_parser("export", help="copy matching photos to matched/<name>/<album>/")
+    p = sub.add_parser("export", parents=[common], help="copy matching photos to matched/<name>/<album>/")
     p.add_argument("person")
     p.add_argument("--threshold", type=float, default=faces.DEFAULT_THRESHOLD)
     p.add_argument("--matched", type=Path, default=faces.DEFAULT_MATCHED, help="output root (default: matched)")
     p.add_argument("--link", action="store_true", help="hardlink instead of copy")
     p.add_argument("--prune", action="store_true", help="delete earlier copies that no longer match")
     p.add_argument("--yes", action="store_true", help="actually write files (default: dry run)")
+
+    p = sub.add_parser("compare", help="side-by-side scores from two cached detectors")
+    p.add_argument("person")
+    p.add_argument("--threshold", type=float, default=faces.DEFAULT_THRESHOLD)
+    p.add_argument(
+        "--detectors",
+        nargs=2,
+        choices=faces.DETECTORS,
+        default=None,
+        help="pair to compare (default: whatever two pipelines are cached)",
+    )
 
     p = sub.add_parser("upload", help="mirror matched/<name>/ to the SMB share (<share>/<name>/<album>/)")
     p.add_argument("person")
@@ -94,19 +112,21 @@ def main(argv: list[str] | None = None) -> int:
         if existing and not args.force:
             print(f"{args.person!r} already has {existing} reference(s); use --force to re-enroll")
             return 0
-        det, rec = faces.load_models(args.models)
+        det, rec = faces.load_models(args.detector, args.models)
         warnings = faces.enroll(db, args.person, args.refs / args.person / "face", det, rec, args.db.parent / "refs")
-        count = db.execute("SELECT COUNT(*) FROM refs WHERE person = ?", (args.person,)).fetchone()[0]
-        print(f"enrolled {count} reference photo(s) for {args.person!r}")
+        count = db.execute(
+            "SELECT COUNT(*) FROM refs WHERE person = ? AND pipeline = ?", (args.person, faces.pipeline_id(det))
+        ).fetchone()[0]
+        print(f"enrolled {count} reference photo(s) for {args.person!r} [{faces.pipeline_id(det)}]")
         for warning in warnings:
             print(f"   ! {warning}")
         print(f"   aligned crops: {args.db.parent / 'refs' / args.person}/ (check these are all her)")
         return 0
 
     if args.cmd == "scan":
-        det, rec = faces.load_models(args.models)
-        done, skipped = faces.scan(db, args.photos, det, rec, faces.ARC_MEMBER)
-        print(f"scanned {done} photo(s), {skipped} already cached")
+        det, rec = faces.load_models(args.detector, args.models)
+        done, skipped = faces.scan(db, args.photos, det, rec, faces.DEFAULT_FLOOR)
+        print(f"scanned {done} photo(s), {skipped} already cached [{faces.pipeline_id(det)}]")
         return 0
 
     if args.cmd == "upload":
@@ -136,7 +156,21 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 0
 
-    rows = faces.collect(db, args.person, args.photos, args.min_face)
+    if args.cmd == "compare":
+        chosen = args.detectors or [faces.detector_of(p) for p in faces.pipelines(db)]
+        pair = [p for p in faces.pipelines(db) if faces.detector_of(p) in chosen]
+        if len(pair) < 2:
+            raise SystemExit(
+                f"need two scanned detectors to compare; cached: {[faces.detector_of(p) for p in faces.pipelines(db)]} "
+                "— run scan --detector yunet and scan --detector scrfd first"
+            )
+        rows_by_pipeline = {p: faces.collect(db, args.person, args.photos, args.min_face, p) for p in pair[:2]}
+        stats = faces.compare(rows_by_pipeline, args.threshold)
+        found = faces.disagreements(rows_by_pipeline, args.threshold)
+        print(faces.compare_report(stats, found, args.threshold))
+        return 0
+
+    rows = faces.collect(db, args.person, args.photos, args.min_face, faces.pipeline_for(db, args.detector))
     if args.cmd == "report":
         out = args.out or args.db.parent / f"report-{args.person}.html"
         print("threshold  photos kept  share")
