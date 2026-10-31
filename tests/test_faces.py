@@ -318,3 +318,17 @@ def test_scan_skips_files_that_vanished(tmp_path, monkeypatch):
 
     assert (done, skipped) == (1, 0)
     assert faces.cached_photo(db, real_sha1(keep), faces.pipeline_id(stub, 20))
+
+
+def test_enroll_guard_is_per_detector(tmp_path):
+    import face_filter
+
+    db = faces.open_db(tmp_path / "faces.db")
+    add_ref(db, person="kid", pipeline=PIPE)
+
+    assert face_filter.enrolled_pipelines(db, "kid", "yunet") == [PIPE]
+    assert face_filter.enrolled_pipelines(db, "kid", "scrfd") == [], "a second detector must not need --force"
+
+    add_ref(db, person="kid", pipeline=OTHER_PIPE)
+    assert face_filter.enrolled_pipelines(db, "kid", "scrfd") == [OTHER_PIPE]
+    assert face_filter.enrolled_pipelines(db, "someoneelse", "yunet") == []

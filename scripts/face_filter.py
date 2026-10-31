@@ -27,6 +27,12 @@ import smb_sync
 from dotenv import load_dotenv
 
 
+def enrolled_pipelines(db, person: str, detector: str) -> list[str]:
+    """Cached pipelines this person is already enrolled for on ``detector``."""
+    rows = db.execute("SELECT DISTINCT pipeline FROM refs WHERE person = ?", (person,))
+    return [row[0] for row in rows if faces.detector_of(row[0]) == detector]
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -108,9 +114,11 @@ def main(argv: list[str] | None = None) -> int:
     db = faces.open_db(args.db)
 
     if args.cmd == "enroll":
-        existing = db.execute("SELECT COUNT(*) FROM refs WHERE person = ?", (args.person,)).fetchone()[0]
-        if existing and not args.force:
-            print(f"{args.person!r} already has {existing} reference(s); use --force to re-enroll")
+        enrolled = enrolled_pipelines(db, args.person, args.detector)
+        if enrolled and not args.force:
+            print(
+                f"{args.person!r} already enrolled for {args.detector} ({len(enrolled)} pipeline); use --force to redo"
+            )
             return 0
         det, rec = faces.load_models(args.detector, args.models)
         warnings = faces.enroll(db, args.person, args.refs / args.person / "face", det, rec, args.db.parent / "refs")
