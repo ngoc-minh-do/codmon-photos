@@ -239,7 +239,12 @@ def main():
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--out", default="downloads")
+    ap.add_argument(
+        "--out",
+        default="downloads",
+        help="album root directory: each album is written to <OUT>/<date>_<title>/ "
+        "(default: downloads; face_filter.py --photos must point here too)",
+    )
     ap.add_argument("--date", default=None, help="YYYY-MM-DD; default scans the last --lookback days for albums")
     ap.add_argument(
         "--lookback", type=int, default=45, help="days back from today to scan when --date is omitted (default 45)"
@@ -249,7 +254,7 @@ def main():
         default=DEFAULT_TZ,
         help="timezone of insert_datetime, as EXIF OffsetTimeOriginal (default: +09:00 Tokyo)",
     )
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=4, help="parallel downloads (default 4)")
     ap.add_argument(
         "--dry-run",
         action=argparse.BooleanOptionalAction,
