@@ -689,6 +689,10 @@ def compare(rows_by_pipeline: dict[str, list[dict]], threshold: float) -> dict:
         "only_a": only_a,
         "only_b": only_b,
         "neither": neither,
+        "hit_a": both + only_a,
+        "hit_b": both + only_b,
+        "union": both + only_a + only_b,
+        "agree": both + neither,
         "deltas": np.array(deltas) if deltas else np.array([]),
     }
 
@@ -718,25 +722,39 @@ def disagreements(rows_by_pipeline: dict[str, list[dict]], threshold: float, lim
 
 
 def compare_report(stats: dict, found: list[dict], threshold: float) -> str:
-    """Terminal summary of a detector comparison."""
+    """Terminal summary of a detector comparison: a 2x2 table plus score deltas.
+
+    The four counts are disjoint and add up to the shared photos; a detector's
+    own total is ``both + only that detector``, and ``union`` is photos kept by
+    either one.
+    """
     a, b = stats["pipelines"]
+    da, db = detector_of(a), detector_of(b)
+    shared = stats["shared"]
     lines = [
-        f"{detector_of(a)} vs {detector_of(b)}  (threshold {threshold:.2f}, {stats['shared']} shared photos)",
-        f"  both: {stats['both']:4d}   only {detector_of(a)}: {stats['only_a']:4d}   "
-        f"only {detector_of(b)}: {stats['only_b']:4d}   neither: {stats['neither']:4d}",
+        f"{da} vs {db}  (threshold {threshold:.2f}, {shared} shared photos)",
+        "",
+        f"  {'':12s}{db + ' hit':>12s}{db + ' miss':>13s}{'total':>9s}",
+        f"  {da + ' hit':12s}{stats['both']:12d}{stats['only_a']:13d}{stats['hit_a']:9d}",
+        f"  {da + ' miss':12s}{stats['only_b']:12d}{stats['neither']:13d}{shared - stats['hit_a']:9d}",
+        f"  {'total':12s}{stats['hit_b']:12d}{shared - stats['hit_b']:13d}{shared:9d}",
+        "",
+        f"  both {stats['both']}  ·  only {da} {stats['only_a']}  ·  only {db} {stats['only_b']}  "
+        f"·  neither {stats['neither']}  ·  either {stats['union']}",
+        f"  agree {stats['agree']}/{shared} ({stats['agree'] / (shared or 1) * 100:.0f}%)",
     ]
     if stats["deltas"].size:
         d = stats["deltas"]
         lines.append(
-            f"  score delta ({detector_of(b)} - {detector_of(a)}) on shared hits: "
+            f"  score delta ({db} - {da}) on shared hits: "
             f"median {np.median(d):+.3f}, mean {d.mean():+.3f}, p10 {np.percentile(d, 10):+.3f}, "
             f"p90 {np.percentile(d, 90):+.3f}"
         )
     for item in found:
         lines.append(
             f"  {detector_of(item['winner']):6s} only  {item['album']}/{item['name']}  "
-            f"{detector_of(a)}={item['a']['score']:.2f}/{item['a']['faces']}f  "
-            f"{detector_of(b)}={item['b']['score']:.2f}/{item['b']['faces']}f"
+            f"{da}={item['a']['score']:.2f}/{item['a']['faces']}f  "
+            f"{db}={item['b']['score']:.2f}/{item['b']['faces']}f"
         )
     return "\n".join(lines)
 

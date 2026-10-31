@@ -238,6 +238,32 @@ def test_compare_counts_agreement_and_only_buckets(tmp_path):
     # both.jpg hit by both, both2.jpg and a.jpg only by the first, b.jpg only by the second
     assert (stats["both"], stats["only_a"], stats["only_b"], stats["neither"]) == (1, 2, 1, 1)
     assert stats["deltas"].round(2).tolist() == [-0.10]
+    # the four buckets are disjoint and cover every shared photo
+    assert stats["both"] + stats["only_a"] + stats["only_b"] + stats["neither"] == stats["shared"]
+    # per-detector totals and the union are derived, not the sum of the "only" buckets
+    assert stats["hit_a"] == stats["both"] + stats["only_a"] == 3
+    assert stats["hit_b"] == stats["both"] + stats["only_b"] == 2
+    assert stats["union"] == stats["both"] + stats["only_a"] + stats["only_b"] == 4
+    assert stats["agree"] == stats["both"] + stats["neither"] == 2
+
+
+def test_compare_report_shows_the_contingency_table():
+    album = pathlib.Path("/albums/x")
+    a = [
+        {"album": "x", "path": album / n, "score": s, "faces": 1, "face_width": 50.0, "pipeline": PIPE}
+        for n, s in (("both.jpg", 0.6), ("a.jpg", 0.6), ("b.jpg", 0.1))
+    ]
+    b = [
+        {"album": "x", "path": album / n, "score": s, "faces": 1, "face_width": 50.0, "pipeline": OTHER_PIPE}
+        for n, s in (("both.jpg", 0.6), ("a.jpg", 0.1), ("b.jpg", 0.6))
+    ]
+    stats = faces.compare({PIPE: a, OTHER_PIPE: b}, 0.45)
+    text = faces.compare_report(stats, [], 0.45)
+    assert "both 1" in text and "only yunet 1" in text and "only scrfd 1" in text
+    assert "either 3" in text
+    # nobody is missed by both in this fixture, so agreement is just "both"
+    assert "agree 1/3" in text
+    assert "yunet hit" in text and "scrfd miss" in text
 
 
 def test_disagreements_lists_the_split_photos():
