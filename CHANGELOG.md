@@ -24,3 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-runs are cheap and resume cleanly.
 - Optional `APPRISE_URL` success notification, sent only when at least one album
   was actually downloaded.
+- Album discovery skips `kind=8` timeline entries that carry no photos (attendance
+  forms, absence notices) and tolerates a 404 from the albums endpoint, so one
+  unrelated item can no longer abort a whole run.

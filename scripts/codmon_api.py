@@ -28,6 +28,10 @@ class CodmonError(RuntimeError):
     pass
 
 
+class CodmonNotFound(CodmonError):
+    """The endpoint answered 404 — e.g. an id that is not a photo album."""
+
+
 @dataclass
 class Album:
     album_id: str
@@ -66,7 +70,8 @@ class CodmonClient:
             with self._opener.open(req, timeout=60) as resp:
                 payload = json.load(resp)
         except urllib.error.HTTPError as exc:
-            raise CodmonError(f"Codmon API HTTP {exc.code} from {method} {path}") from exc
+            kind = CodmonNotFound if exc.code == 404 else CodmonError
+            raise kind(f"Codmon API HTTP {exc.code} from {method} {path}") from exc
         except urllib.error.URLError as exc:
             raise CodmonError(f"Codmon API unreachable ({exc.reason}) for {method} {path}") from exc
         if not isinstance(payload, dict):
@@ -134,12 +139,15 @@ class CodmonClient:
                 ]
                 body = self._request("GET", "/api/v2/parent/timeline/", params=params)
                 for item in body.get("data", []):
-                    if str(item.get("kind")) != PHOTO_KIND:
+                    if str(item.get("kind")) != PHOTO_KIND or not self._is_photo_album(item):
                         continue
                     album_id = str(item.get("id", ""))
                     if album_id in seen:
                         continue
-                    detail, photos = self.album_detail(album_id)
+                    try:
+                        detail, photos = self.album_detail(album_id)
+                    except CodmonNotFound:
+                        continue  # deleted, or an id that is not a photo album
                     if not photos:
                         continue
                     seen.add(album_id)
@@ -161,6 +169,15 @@ class CodmonClient:
                 page = next_page
         albums.sort(key=lambda a: (a.display_date, a.insert_datetime), reverse=True)
         return albums
+
+    @staticmethod
+    def _is_photo_album(item: dict) -> bool:
+        """Timeline ``kind=8`` also carries non-photo forms (attendance reports,
+        absence notices). A real album ships a photo payload or a photo count."""
+        photos = item.get("photos")
+        if isinstance(photos, dict):
+            photos = photos.get("lists")
+        return bool(photos) or bool(item.get("photo_count"))
 
     @staticmethod
     def _photo_rows(item: dict) -> list[tuple[str, str]]:

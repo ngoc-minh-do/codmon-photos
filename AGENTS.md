@@ -54,6 +54,10 @@ is 500; omitting size params -> 403.
 
 - Signed URLs expire in ~40 minutes. A 403 during a run means re-run the script
   (it re-fetches fresh URLs from the API); do not retry or tweak old URLs.
+- The timeline mixes real photo albums with `kind=8` non-photo forms (attendance
+  reports, absence notices) and the albums endpoint 404s on those ids. Discovery
+  filters on `photos`/`photo_count` and treats 404 as "not an album"
+  (`CodmonNotFound`); any other status still aborts.
 - The user previously rejected always-on NAS upload, later asked for an **optional**
   SMB target (enabled only when all `SMB_*` vars are set in `.env`), and then
   changed it to: when SMB is enabled the album goes **only** to the share (no
