@@ -20,10 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optional SMB mirror for the face filter's output: `face_filter.py upload`
   copies `matched/<name>/` to `//<host>/<share>/<name>/<album>/`, skipping files
   already present and deleting nothing unless `--delete` is passed.
-- Skip albums whose target folder already contains files (local or SMB) so
-  re-runs are cheap and resume cleanly.
-- Optional `APPRISE_URL` success notification, sent only when at least one album
-  was actually downloaded.
+- Skip albums whose folder already contains files so re-runs are cheap and
+  resume cleanly.
+- Optional `APPRISE_URL` success notification, sent only after an upload that
+  actually put photos on the share.
 - Optional face filter (`scripts/face_filter.py`): enroll a child from
   `refs/<name>/face/*.jpg`, score every downloaded photo by ArcFace similarity,
   review a threshold sweep in a self-contained HTML sheet, then copy matches to

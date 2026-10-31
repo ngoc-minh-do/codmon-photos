@@ -42,29 +42,15 @@ def test_plan_names_disambiguates_duplicates(tmp_path):
     assert {p[2] for p in planned} == {"1_IMG_A.JPG", "2_IMG_A.JPG"}
 
 
-def test_target_has_files_local(tmp_path):
+def test_album_has_files(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
     full = tmp_path / "full"
     full.mkdir()
     (full / "a.jpg").write_bytes(b"x")
-    assert not m.target_has_files(str(empty), False)
-    assert m.target_has_files(str(full), False)
-    assert not m.target_has_files(str(tmp_path / "missing"), False)
-
-
-def test_smb_config(monkeypatch):
-    monkeypatch.delenv("SMB_HOST", raising=False)
-    monkeypatch.delenv("SMB_SHARE", raising=False)
-    monkeypatch.delenv("SMB_USER", raising=False)
-    monkeypatch.delenv("SMB_PASSWORD", raising=False)
-    assert m.smb_config({}) is None
-    try:
-        m.smb_config({"SMB_HOST": "x"})
-    except SystemExit:
-        pass
-    else:
-        raise AssertionError("partial SMB config should fail")
+    assert not m.album_has_files(str(empty))
+    assert m.album_has_files(str(full))
+    assert not m.album_has_files(str(tmp_path / "missing"))
 
 
 def test_stamp_exif(tmp_path):
@@ -74,18 +60,3 @@ def test_stamp_exif(tmp_path):
     exif = piexif.load(str(path))
     assert exif["Exif"][piexif.ExifIFD.DateTimeOriginal] == b"2026:10:05 11:39:12"
     assert exif["Exif"][piexif.ExifIFD.OffsetTimeOriginal] == b"+09:00"
-
-
-def test_notification_body_single():
-    body = m.notification_body([("2026-10-05_〈０歳児〉9月の活動写真", 50)], 50, 0, "//nas/share")
-    assert body == "1 new album · 50 photos\n- 2026-10-05_〈０歳児〉9月の活動写真 (50)\n→ //nas/share"
-
-
-def test_notification_body_multiple_with_skips():
-    body = m.notification_body([("a", 50), ("b", 53)], 103, 9, "downloads")
-    lines = body.splitlines()
-    assert lines[0] == "2 new albums · 103 photos (9 already present)"
-    assert lines[1] == "- a (50)"
-    assert lines[2] == "- b (53)"
-    assert lines[3] == "→ downloads"
-    assert len(lines) == 4

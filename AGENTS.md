@@ -6,9 +6,10 @@ Download photos from Codmon at the best resolution the CDN allows into
 `./downloads/<display_date>_<album_title>` (e.g. `downloads/2026-10-05_sports-day`;
 a `_<album_id>` suffix is added only when two albums share the same date+title).
 The date comes from each photo album's `insert_datetime` / `display_date`
-(Tokyo time). Downloads stay local; if `SMB_HOST`/`SMB_SHARE`/`SMB_USER`/`SMB_PASSWORD`
-are set in `.env`, albums go **only** to the SMB share (`\\<host>\<share>\<album>`)
-via a temp staging dir — no local copy. Recurring, roughly monthly task.
+(Tokyo time). Albums always land in `./downloads/` and are never uploaded.
+If `SMB_HOST`/`SMB_SHARE`/`SMB_USER`/`SMB_PASSWORD` are set in `.env`, only the
+face filter's output (`matched/<name>/`) is mirrored to the share as
+`//<host>/<share>/<name>/<album>/`. Recurring, roughly monthly task.
 
 The script logs directly into the Codmon parent API (`ps-api.codmon.com`,
 email/password session) — no browser, no pasted JSON. The same internal API
@@ -106,16 +107,15 @@ Rules:
   reports, absence notices) and the albums endpoint 404s on those ids. Discovery
   filters on `photos`/`photo_count` and treats 404 as "not an album"
   (`CodmonNotFound`); any other status still aborts.
-- The user previously rejected always-on NAS upload, later asked for an **optional**
-  SMB target (enabled only when all `SMB_*` vars are set in `.env`), and then
-  changed it to: when SMB is enabled the album goes **only** to the share (no
-  local copy); when unset, downloads stay local under `downloads/`.
+- SMB history: the user rejected always-on NAS upload, briefly used an optional
+  staging-based SMB-only mode (albums to the share, no local copy), then dropped
+  that: albums now always stay local and only `matched/<name>/` is uploaded.
 - The user explicitly rejected per-photo best-resolution fetching. Calibration
   only.
 
 ## Layout
 
-- `scripts/codmon_sync.py` — the pipeline (login -> download to dated folder; SMB-only mode when configured)
+- `scripts/codmon_sync.py` — the pipeline (login -> download to dated folder; no uploads)
 - `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline)
 - `scripts/faces.py` — detect/align/embed, content-addressed sqlite cache, scoring, report
 - `scripts/face_filter.py` — CLI over `faces.py` (enroll / scan / report / export / upload)
@@ -126,4 +126,4 @@ Rules:
 - `.cache/` — sqlite embedding cache, ONNX models, review reports (gitignored)
 - `pyproject.toml` / `uv.lock` — uv-managed deps
 - `.env.example` — credentials template; copy to `.env`
-- `downloads/<date>_<title>/` — where photos land (when SMB is not configured)
+- `downloads/<date>_<title>/` — where albums land (always local)

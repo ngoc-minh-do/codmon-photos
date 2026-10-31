@@ -7,21 +7,15 @@ calibration pipeline and CDN rules.
 """
 
 import argparse
-import json
 import os
-import shutil
 import subprocess
-import tempfile
 import time
-import urllib.error
-import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import piexif
-import smbclient
 from codmon_api import CodmonClient, CodmonError
 from dotenv import load_dotenv
 
@@ -195,78 +189,9 @@ def safe_title(title):
     return name or "album"
 
 
-SMB_ENV = ("SMB_HOST", "SMB_SHARE", "SMB_USER", "SMB_PASSWORD")
-
-
-def smb_config(cfg):
-    """Resolve the SMB_* env vars. Returns {host, share, user, password} or
-    None when none are set. Errors out if only some are set."""
-    values = {key: cfg.get(key, "").strip() for key in SMB_ENV}
-    if not any(values.values()):
-        return None
-    missing = [key for key, value in values.items() if not value]
-    if missing:
-        raise SystemExit(
-            f"SMB_* partially configured; missing {', '.join(missing)} "
-            "(set all four in .env or leave all unset to skip uploads)"
-        )
-    return values
-
-
-def smb_upload(local_dir, folder, cfg):
-    """Mirror an album folder to //HOST/SHARE/<folder>, preserving local copy."""
-    host = cfg["SMB_HOST"]
-    target = f"//{host}/{cfg['SMB_SHARE']}/{folder}"
-    smbclient.register_session(host, username=cfg["SMB_USER"], password=cfg["SMB_PASSWORD"])
-    smbclient.makedirs(target, exist_ok=True)
-    uploaded = 0
-    for name in sorted(os.listdir(local_dir)):
-        local = os.path.join(local_dir, name)
-        if not os.path.isfile(local):
-            continue
-        with open(local, "rb") as src, smbclient.open_file(f"{target}/{name}", "wb") as dst:
-            shutil.copyfileobj(src, dst)
-        uploaded += 1
-    return uploaded
-
-
-def notification_body(downloaded, total, skipped, dest):
-    """Multi-line success message listing each newly downloaded album."""
-    header = f"{len(downloaded)} new album{'s' if len(downloaded) != 1 else ''} · {total} photos"
-    if skipped:
-        header += f" ({skipped} already present)"
-    lines = [header, *(f"- {name} ({count})" for name, count in downloaded), f"→ {dest}"]
-    return "\n".join(lines)
-
-
-def notify(url, title, body):
-    """POST an Apprise-style notification. Returns False when disabled or on
-    failure; never raises."""
-    url = (url or "").strip()
-    if not url:
-        return False
-    payload = json.dumps({"title": title, "body": body, "type": "success"}).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            resp.read()
-        return True
-    except Exception as exc:
-        print(f"   -> Apprise notification failed: {exc}")
-        return False
-
-
-def target_has_files(target, smb):
+def album_has_files(target):
     """True when the album dir exists and holds at least one file, so it can be
     skipped on re-runs. Empty leftover dirs are treated as not downloaded."""
-    if smb:
-        if not smbclient.path.exists(target):
-            return False
-        try:
-            entries = list(smbclient.scandir(target))
-        except Exception:
-            return False
-        return any(not e.is_dir() for e in entries)
     if not os.path.isdir(target):
         return False
     return any(os.path.isfile(os.path.join(target, name)) for name in os.listdir(target))
@@ -356,10 +281,8 @@ def main():
 
     folders = [f"{a.display_date}_{safe_title(a.title)}" for a in albums]
     name_counts = Counter(folders)
-    smb = smb_config(os.environ)
     if args.dry_run:
-        dest = f"//{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album>" if smb else f"{args.out}/"
-        print(f"dry run -> would download to {dest}")
+        print(f"dry run -> would download to {args.out}/")
         total_photos = 0
         for album, folder in zip(albums, folders, strict=True):
             if name_counts[folder] > 1:
@@ -372,23 +295,13 @@ def main():
             )
         print(f"done (dry run): would download {total_photos} photos across {len(albums)} album(s)")
         return
-    if smb:
-        print(f"SMB mode -> uploading albums to //{smb['SMB_HOST']}/{smb['SMB_SHARE']}/<album> (no local copy)")
-        smbclient.register_session(smb["SMB_HOST"], username=smb["SMB_USER"], password=smb["SMB_PASSWORD"])
-    stage = (
-        tempfile.mkdtemp(prefix="codmon-") if smb else None
-    )  # staging dir for SMB-mode downloads; removed after a successful upload
     total = 0
     skipped = 0
-    downloaded = []
     for album, folder in zip(albums, folders, strict=True):
         if name_counts[folder] > 1:
             folder = f"{folder}_{album.album_id}"
-        if smb:
-            target = f"//{smb['SMB_HOST']}/{smb['SMB_SHARE']}/{folder}"
-        else:
-            target = os.path.join(args.out, folder)
-        if target_has_files(target, bool(smb)):
+        target = os.path.join(args.out, folder)
+        if album_has_files(target):
             skipped += 1
             print(f"   -> {folder} already downloaded; skipping")
             continue
@@ -399,31 +312,9 @@ def main():
         )
         if exif_dt:
             print(f"   -> EXIF DateTimeOriginal {exif_dt} (tz {args.tz})")
-        count = run_album(album.photos, folder, exif_dt, stage or args.out, args.workers, args.tz)
+        count = run_album(album.photos, folder, exif_dt, args.out, args.workers, args.tz)
         total += count
-        downloaded.append((folder, count))
-        if smb:
-            local_dir = os.path.join(stage, folder)
-            try:
-                uploaded = smb_upload(local_dir, folder, smb)
-                print(f"   -> uploaded {uploaded} files to //{smb['SMB_HOST']}/{smb['SMB_SHARE']}/{folder}")
-                shutil.rmtree(local_dir)
-            except Exception as exc:
-                print(f"   -> SMB upload FAILED for {folder}; kept staged at {local_dir}: {exc}")
-    if stage:
-        leftovers = [d for d in os.listdir(stage) if os.path.isdir(os.path.join(stage, d))]
-        if leftovers:
-            print(f"SMB upload incomplete; kept staged copies in {stage}: {leftovers}")
-        else:
-            shutil.rmtree(stage)
-    dest = f"//{smb['SMB_HOST']}/{smb['SMB_SHARE']}" if smb else f"{args.out}"
-    print(f"done: {total} photos across {len(albums)} album(s) ({skipped} skipped) -> {dest}")
-    if downloaded:
-        notify(
-            os.environ.get("APPRISE_URL", ""),
-            "# 👍 codmon photos ok",
-            notification_body(downloaded, total, skipped, dest),
-        )
+    print(f"done: {total} photos across {len(albums)} album(s) ({skipped} skipped) -> {args.out}")
 
 
 if __name__ == "__main__":

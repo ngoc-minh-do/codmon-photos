@@ -27,9 +27,10 @@ The integration is unofficial and can break if Codmon changes its API.
    and `OffsetTimeOriginal` (default `+09:00` Tokyo) backfilled from the
    album's `insert_datetime`; without this, importers (Immich, Windows) date
    the photos at download time.
-5. **Mirror (optional)** — if `SMB_*` vars are set in `.env`, each album is
-   uploaded to a NAS SMB share via a temp staging dir and **no local copy is
-   kept**; when they are unset, albums stay in `./downloads/`.
+5. **Export + mirror (optional)** — albums always stay in `./downloads/`. The
+   face filter can copy the photos a given child appears in to
+   `matched/<name>/`, and `face_filter.py upload` mirrors that folder to a NAS
+   SMB share (`//<host>/<share>/<name>/<album>/`). Albums are never uploaded.
 
 ## Setup
 
@@ -49,8 +50,8 @@ uv run scripts/codmon_sync.py --lookback 90        # a longer window
 ```
 
 Options: `--date`, `--lookback` (default 45 days), `--out`, `--workers`,
-`--tz`. Set `APPRISE_URL` in `.env` to get a success notification after runs
-that actually downloaded/uploaded albums (all-skip runs stay silent). Run
+`--tz`. Set `APPRISE_URL` in `.env` to get a success notification after an
+upload that actually put photos on the share (all-skip runs stay silent). Run
 `uv run scripts/codmon_sync.py -h`.
 
 ## Filter by face (optional)
