@@ -61,6 +61,7 @@ uv run scripts/face_filter.py enroll <name>
 uv run scripts/face_filter.py scan                    # detect + embed every photo (cached)
 uv run scripts/face_filter.py report <name>            # sweep + .cache/report-<name>.html
 uv run scripts/face_filter.py export <name> --threshold 0.50 --yes
+uv run scripts/face_filter.py upload <name> --yes      # optional: mirror to the NAS
 ```
 
 Rules:
@@ -90,6 +91,12 @@ Rules:
 - Body matching is deliberately absent: `reid_0265` is short-term ReID, so it
   only fires within one album's outfit, and on these 500px photos it returned no
   matches at its 0.85 threshold.
+- `upload` mirrors `matched/<name>/` to `//<host>/<share>/<name>/<album>/`,
+  skipping files already there with the same name and size; `--delete` removes
+  remote files that no longer match. Nothing else is ever uploaded, and old
+  album folders already on the share are left alone.
+- `APPRISE_URL` notifies after an **upload** that moved photos; downloads are
+  silent.
 
 ## Gotchas
 
@@ -111,7 +118,9 @@ Rules:
 - `scripts/codmon_sync.py` — the pipeline (login -> download to dated folder; SMB-only mode when configured)
 - `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline)
 - `scripts/faces.py` — detect/align/embed, content-addressed sqlite cache, scoring, report
-- `scripts/face_filter.py` — CLI over `faces.py` (enroll / scan / report / export)
+- `scripts/face_filter.py` — CLI over `faces.py` (enroll / scan / report / export / upload)
+- `scripts/smb_sync.py` — upload planning + mirroring to the SMB share
+- `scripts/notify.py` — Apprise webhook POST
 - `refs/<name>/face/*.jpg` — reference photos of a child (gitignored)
 - `matched/<name>/<album>/` — copies of the photos that matched (gitignored)
 - `.cache/` — sqlite embedding cache, ONNX models, review reports (gitignored)

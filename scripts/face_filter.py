@@ -5,20 +5,26 @@
     uv run scripts/face_filter.py scan                 # detect + embed every photo (cached)
     uv run scripts/face_filter.py report <name>        # review sheet + threshold sweep
     uv run scripts/face_filter.py export <name> --threshold 0.50
+    uv run scripts/face_filter.py upload <name>            # -> SMB share
 
 References live in ``refs/<name>/face/``; embeddings and scores in
 ``.cache/faces.db``; models in ``.cache/models``. ``export`` copies matches to
-``matched/<name>/<album>/`` and never modifies the album folders. See
-scripts/faces.py for the pipeline and AGENTS.md for the resolution limits.
+``matched/<name>/<album>/`` and never modifies the album folders; ``upload``
+mirrors that folder to ``//<host>/<share>/<name>/<album>/``. See scripts/faces.py
+for the pipeline and AGENTS.md for the resolution limits.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 import faces
+import notify
+import smb_sync
+from dotenv import load_dotenv
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -70,11 +76,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prune", action="store_true", help="delete earlier copies that no longer match")
     p.add_argument("--yes", action="store_true", help="actually write files (default: dry run)")
 
+    p = sub.add_parser("upload", help="mirror matched/<name>/ to the SMB share (<share>/<name>/<album>/)")
+    p.add_argument("person")
+    p.add_argument("--matched", type=Path, default=faces.DEFAULT_MATCHED, help="local root (default: matched)")
+    p.add_argument("--delete", action="store_true", help="remove remote photos that are no longer in matched/")
+    p.add_argument("--yes", action="store_true", help="actually upload (default: dry run)")
     return ap
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    load_dotenv()
     db = faces.open_db(args.db)
 
     if args.cmd == "enroll":
@@ -95,6 +107,33 @@ def main(argv: list[str] | None = None) -> int:
         det, rec = faces.load_models(args.models)
         done, skipped = faces.scan(db, args.photos, det, rec, faces.ARC_MEMBER)
         print(f"scanned {done} photo(s), {skipped} already cached")
+        return 0
+
+    if args.cmd == "upload":
+        cfg = smb_sync.smb_config(os.environ)
+        if not cfg:
+            raise SystemExit("set SMB_HOST / SMB_SHARE / SMB_USER / SMB_PASSWORD in .env to upload")
+        client = smb_sync.client_for(cfg)
+        stats = smb_sync.plan_uploads(args.matched, args.person, cfg, client)
+        prunable = smb_sync.prune_targets(args.matched, args.person, cfg, client) if args.delete else []
+        print(f"{smb_sync.remote_base(cfg, args.person)}/ <- {args.matched / args.person}/")
+        print(smb_sync.upload_report(stats, prunable))
+        if not args.yes:
+            return 0
+        uploaded = smb_sync.upload_files(stats["uploads"], client)
+        removed = 0
+        for remote in prunable:
+            client.remove(remote)
+            removed += 1
+        print(f"uploaded {uploaded}, removed {removed}")
+        if uploaded or removed:
+            notify.notify(
+                os.environ.get("APPRISE_URL", ""),
+                "# 👍 codmon photos uploaded",
+                smb_sync.upload_body(
+                    stats["uploads"], len(stats["skipped"]), removed, smb_sync.remote_base(cfg, args.person)
+                ),
+            )
         return 0
 
     rows = faces.collect(db, args.person, args.photos, args.min_face)

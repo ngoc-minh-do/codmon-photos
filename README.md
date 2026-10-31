@@ -65,6 +65,7 @@ uv run scripts/face_filter.py enroll <name>          # build the reference galle
 uv run scripts/face_filter.py scan                   # embed every photo (cached)
 uv run scripts/face_filter.py report <name>          # threshold sweep + review sheet
 uv run scripts/face_filter.py export <name> --threshold 0.50 --yes
+uv run scripts/face_filter.py upload <name> --yes   # optional: mirror to the NAS
 ```
 
 `report` writes a self-contained `.cache/report-<name>.html` with every photo,
@@ -75,6 +76,11 @@ hardlinks instead of copying, `--prune` drops earlier copies that no longer
 match. Scores are cached in `.cache/faces.db` keyed by file content, so trying
 another threshold never re-runs a model and never needs a re-scan.
 
+`upload` needs all four `SMB_*` vars in `.env`; it uploads only files missing on
+the share (same name and size are skipped) and never deletes anything unless
+`--delete` is passed. `APPRISE_URL` fires after an upload that actually moved
+photos, not after a download.
+
 `refs/`, `matched/` and `.cache/` are git-ignored: reference photos and
 embeddings stay on your machine, and the ONNX models are downloaded once into
 `.cache/models`.
@@ -84,7 +90,9 @@ embeddings stay on your machine, and the ONNX models are downloaded once into
 - `scripts/codmon_sync.py` — the pipeline (login → download to dated folder; SMB-only mode when configured)
 - `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline, albums)
 - `scripts/faces.py` — face detect/align/embed, embedding cache, scoring, review sheet
-- `scripts/face_filter.py` — CLI: `enroll` / `scan` / `report` / `export`
+- `scripts/smb_sync.py` — upload planning/mirroring for the SMB share
+- `scripts/notify.py` — Apprise webhook POST
+- `scripts/face_filter.py` — CLI: `enroll` / `scan` / `report` / `export` / `upload`
 - `refs/<name>/face/*.jpg` — reference photos of a child (git-ignored)
 - `matched/<name>/<album>/` — copies of the photos that matched (git-ignored)
 - `.cache/` — content-addressed embedding cache, ONNX models, review sheets (git-ignored)

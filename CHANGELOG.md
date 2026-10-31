@@ -17,9 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   best CDN size combo once per orientation instead of per photo.
 - EXIF stamping: `DateTimeOriginal` + `OffsetTimeOriginal` (`+09:00` Tokyo) are
   backfilled from the album's `insert_datetime` because the CDN strips all EXIF.
-- Optional SMB-only mode: when `SMB_*` vars are set in `.env`, albums are
-  uploaded to the NAS share via a temp staging dir (no local copy); otherwise
-  they stay under `downloads/`.
+- Optional SMB mirror for the face filter's output: `face_filter.py upload`
+  copies `matched/<name>/` to `//<host>/<share>/<name>/<album>/`, skipping files
+  already present and deleting nothing unless `--delete` is passed.
 - Skip albums whose target folder already contains files (local or SMB) so
   re-runs are cheap and resume cleanly.
 - Optional `APPRISE_URL` success notification, sent only when at least one album
