@@ -310,7 +310,7 @@ def main():
             "Examples:\n"
             "  uv run scripts/codmon_sync.py                      # last ~6 weeks\n"
             "  uv run scripts/codmon_sync.py --date 2026-10-05    # one day\n"
-            "  uv run scripts/codmon_sync.py --lookback 220       # ~since March\n"
+            "  uv run scripts/codmon_sync.py --lookback 90        # a longer window\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

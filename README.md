@@ -45,7 +45,7 @@ Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.14.
 ```bash
 uv run scripts/codmon_sync.py                      # scan last 45 days, download every album found
 uv run scripts/codmon_sync.py --date 2026-10-05    # one specific day
-uv run scripts/codmon_sync.py --lookback 220       # scan ~since March
+uv run scripts/codmon_sync.py --lookback 90        # a longer window
 ```
 
 Options: `--date`, `--lookback` (default 45 days), `--out`, `--workers`,
