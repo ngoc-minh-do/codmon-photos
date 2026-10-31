@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-runs are cheap and resume cleanly.
 - Optional `APPRISE_URL` success notification, sent only when at least one album
   was actually downloaded.
+- Optional face filter (`scripts/face_filter.py`): enroll a child from
+  `refs/<name>/face/*.jpg`, score every downloaded photo by ArcFace similarity,
+  review a threshold sweep in a self-contained HTML sheet, then copy matches to
+  `matched/<name>/<album>/` (album folders are never modified). Detection uses
+  YuNet and embeddings are the ArcFace `w600k_r50` head, both plain ONNX;
+  embeddings are cached by file content in `.cache/faces.db`, so changing the
+  threshold never re-runs a model and never needs a re-scan.
 - Album discovery skips `kind=8` timeline entries that carry no photos (attendance
   forms, absence notices) and tolerates a 404 from the albums endpoint, so one
   unrelated item can no longer abort a whole run.

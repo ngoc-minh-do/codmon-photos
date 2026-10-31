@@ -13,5 +13,11 @@ dist/
 # Project data
 downloads/
 
+# Face filter: reference photos are private, .cache/ is derived,
+# matched/ holds copies (the album folders themselves stay untouched)
+refs/
+.cache/
+matched/
+
 # Credentials
 .env

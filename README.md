@@ -53,10 +53,41 @@ Options: `--date`, `--lookback` (default 45 days), `--out`, `--workers`,
 that actually downloaded/uploaded albums (all-skip runs stay silent). Run
 `uv run scripts/codmon_sync.py -h`.
 
+## Filter by face (optional)
+
+Keep only the photos your child is in. The Codmon API carries no per-child tags,
+so this runs locally: face detection (YuNet) + ArcFace embeddings compared with
+photos you enroll once.
+
+```bash
+# put 4-6 face photos of your child in refs/<name>/face/
+uv run scripts/face_filter.py enroll <name>          # build the reference gallery
+uv run scripts/face_filter.py scan                   # embed every photo (cached)
+uv run scripts/face_filter.py report <name>          # threshold sweep + review sheet
+uv run scripts/face_filter.py export <name> --threshold 0.50 --yes
+```
+
+`report` writes a self-contained `.cache/report-<name>.html` with every photo,
+its best similarity score and the matched face crop, so the cutoff can be picked
+by looking rather than guessing. `export` **copies** matching photos to
+`matched/<name>/<album>/` and leaves `downloads/` exactly as downloaded; `--link`
+hardlinks instead of copying, `--prune` drops earlier copies that no longer
+match. Scores are cached in `.cache/faces.db` keyed by file content, so trying
+another threshold never re-runs a model and never needs a re-scan.
+
+`refs/`, `matched/` and `.cache/` are git-ignored: reference photos and
+embeddings stay on your machine, and the ONNX models are downloaded once into
+`.cache/models`.
+
 ## Layout
 
 - `scripts/codmon_sync.py` — the pipeline (login → download to dated folder; SMB-only mode when configured)
 - `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline, albums)
+- `scripts/faces.py` — face detect/align/embed, embedding cache, scoring, review sheet
+- `scripts/face_filter.py` — CLI: `enroll` / `scan` / `report` / `export`
+- `refs/<name>/face/*.jpg` — reference photos of a child (git-ignored)
+- `matched/<name>/<album>/` — copies of the photos that matched (git-ignored)
+- `.cache/` — content-addressed embedding cache, ONNX models, review sheets (git-ignored)
 - `pyproject.toml` / `uv.lock` — uv-managed deps
 - `.env.example` — credentials template; copy to `.env`
 - `downloads/<display_date>_<album_title>/` — where photos land
