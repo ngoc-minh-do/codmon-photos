@@ -12,8 +12,8 @@ def unit(*values):
     return vec / np.linalg.norm(vec)
 
 
-PIPE = "v2:yunet:w600k_r50.onnx:arc112:floor20"
-OTHER_PIPE = "v2:scrfd:w600k_r50.onnx:arc112:floor20"
+PIPE = "v2:yunet:s0.6:w600k_r50.onnx:arc112:floor20"
+OTHER_PIPE = "v2:scrfd:s0.5:w600k_r50.onnx:arc112:floor20"
 
 
 def add_ref(db, person="kid", emb=None, pipeline=PIPE):
@@ -204,11 +204,12 @@ def test_open_db_rebuilds_an_older_cache(tmp_path, capsys):
     assert faces.detector_of(db.execute("SELECT pipeline FROM refs").fetchone()[0]) == "yunet"
 
 
-def test_pipeline_id_separates_detectors_and_floor():
-    yunet = types.SimpleNamespace(name="yunet")
-    scrfd = types.SimpleNamespace(name="scrfd")
+def test_pipeline_id_separates_detectors_score_and_floor():
+    yunet = types.SimpleNamespace(name="yunet", score=0.6)
+    scrfd = types.SimpleNamespace(name="scrfd", score=0.5)
     assert faces.pipeline_id(yunet) != faces.pipeline_id(scrfd)
     assert faces.pipeline_id(yunet, floor=20) != faces.pipeline_id(yunet, floor=40)
+    assert faces.pipeline_id(yunet) != faces.pipeline_id(types.SimpleNamespace(name="yunet", score=0.9))
     assert faces.pipeline_id(yunet) == PIPE
     assert faces.detector_of(faces.pipeline_id(scrfd)) == "scrfd"
 

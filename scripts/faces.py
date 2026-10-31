@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS refs (
 # recognition model, alignment template, or the detection floor).
 PIPELINE_VERSION = "v2"
 # Bump when the table shapes change; an older cache is rebuilt from scratch.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 CACHE_TABLES = ("faces", "photos", "refs")
 
 
@@ -185,9 +185,12 @@ class YunetDetector:
 
     name = YUNET
 
-    def __init__(self, model_path: Path, score: float = 0.6, nms: float = 0.3, top_k: int = 5000):
+    DEFAULT_SCORE = 0.6
+
+    def __init__(self, model_path: Path, score: float = DEFAULT_SCORE, nms: float = 0.3, top_k: int = 5000):
         import cv2
 
+        self.score = score
         self._cv = cv2.FaceDetectorYN.create(str(model_path), "", (640, 640), score, nms, top_k)
 
     def faces(self, img):
@@ -253,8 +256,9 @@ class ScrfdDetector:
     name = SCRFD
     STRIDES = (8, 16, 32)
     ANCHORS = 2
+    DEFAULT_SCORE = 0.5
 
-    def __init__(self, model_path: Path, input_size: int = 640, score: float = 0.5, nms_thresh: float = 0.4):
+    def __init__(self, model_path: Path, input_size: int = 640, score: float = DEFAULT_SCORE, nms_thresh: float = 0.4):
         import onnxruntime as ort
 
         so = ort.SessionOptions()
@@ -263,7 +267,7 @@ class ScrfdDetector:
         self._input = self._sess.get_inputs()[0].name
         self._outputs = [o.name for o in self._sess.get_outputs()]
         self._size = (input_size, input_size)
-        self._score, self._nms = score, nms_thresh
+        self.score, self._nms = score, nms_thresh
         self._cache: dict[tuple[int, int, int], np.ndarray] = {}
 
     def _forward(self, img):
@@ -283,7 +287,7 @@ class ScrfdDetector:
             if key not in self._cache:
                 self._cache[key] = scrfd_anchors(key[0], key[1], stride, self.ANCHORS)
             centres = self._cache[key]
-            pos = np.where(score >= self._score)[0]
+            pos = np.where(score >= self.score)[0]
             scores.append(score[pos])
             boxes.append(distance2bbox(centres, box)[pos])
             kpss.append(distance2kps(centres, kps).reshape(-1, 5, 2)[pos])
@@ -317,13 +321,12 @@ class ScrfdDetector:
         return out
 
 
-def make_detector(name: str, model_path: Path):
-    """Detector instance for ``name`` (``yunet`` or ``scrfd``)."""
-    if name == SCRFD:
-        return ScrfdDetector(model_path)
-    if name == YUNET:
-        return YunetDetector(model_path)
-    raise SystemExit(f"unknown detector {name!r} (choose from {', '.join(DETECTORS)})")
+def make_detector(name: str, model_path: Path, score: float | None = None):
+    """Detector instance for ``name``, optionally with a different det score."""
+    cls = {SCRFD: ScrfdDetector, YUNET: YunetDetector}.get(name)
+    if cls is None:
+        raise SystemExit(f"unknown detector {name!r} (choose from {', '.join(DETECTORS)})")
+    return cls(model_path) if score is None else cls(model_path, score=score)
 
 
 def make_recognizer(model_path: Path):
@@ -336,9 +339,9 @@ def make_recognizer(model_path: Path):
     return sess, sess.get_inputs()[0].name
 
 
-def load_models(detector: str = YUNET, models_dir: Path = DEFAULT_MODELS):
+def load_models(detector: str = YUNET, models_dir: Path = DEFAULT_MODELS, det_score: float | None = None):
     """(detector, recognizer) for ``detector``; downloads/verifies both models."""
-    det = make_detector(detector, ensure_model(detector, models_dir))
+    det = make_detector(detector, ensure_model(detector, models_dir), det_score)
     return det, make_recognizer(ensure_model("arcface", models_dir))
 
 
@@ -351,7 +354,9 @@ def pipeline_id(det, floor: float = DEFAULT_FLOOR) -> str:
     Everything that changes the stored numbers is in here, so swapping a
     detector stores new rows instead of silently reusing the old vectors.
     """
-    return f"{PIPELINE_VERSION}:{det.name}:{ARC_MEMBER}:arc112:floor{floor:g}"
+    score = getattr(det, "score", None)
+    score_tag = "?" if score is None else f"{score:g}"
+    return f"{PIPELINE_VERSION}:{det.name}:s{score_tag}:{ARC_MEMBER}:arc112:floor{floor:g}"
 
 
 def pipeline_for(db: sqlite3.Connection, detector: str, floor: float = DEFAULT_FLOOR) -> str:
@@ -359,7 +364,7 @@ def pipeline_for(db: sqlite3.Connection, detector: str, floor: float = DEFAULT_F
     for known in pipelines(db):
         if detector_of(known) == detector:
             return known
-    return f"{PIPELINE_VERSION}:{detector}:{ARC_MEMBER}:arc112:floor{floor:g}"
+    return f"{PIPELINE_VERSION}:{detector}:s?:{ARC_MEMBER}:arc112:floor{floor:g}"
 
 
 def detect(img, det, min_width: float = DEFAULT_FLOOR):

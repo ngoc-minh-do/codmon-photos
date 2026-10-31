@@ -68,6 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=faces.YUNET,
         help=f"face detector to use; scans are cached per detector (default: {faces.YUNET})",
     )
+    common.add_argument(
+        "--det-score",
+        type=float,
+        default=None,
+        help="detector confidence threshold (default: 0.6 yunet, 0.5 scrfd); part of the cache key",
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("enroll", parents=[common], help="embed refs/<name>/face/*.jpg into the gallery")
@@ -120,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"{args.person!r} already enrolled for {args.detector} ({len(enrolled)} pipeline); use --force to redo"
             )
             return 0
-        det, rec = faces.load_models(args.detector, args.models)
+        det, rec = faces.load_models(args.detector, args.models, args.det_score)
         warnings = faces.enroll(db, args.person, args.refs / args.person / "face", det, rec, args.db.parent / "refs")
         count = db.execute(
             "SELECT COUNT(*) FROM refs WHERE person = ? AND pipeline = ?", (args.person, faces.pipeline_id(det))
@@ -132,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "scan":
-        det, rec = faces.load_models(args.detector, args.models)
+        det, rec = faces.load_models(args.detector, args.models, args.det_score)
         done, skipped = faces.scan(db, args.photos, det, rec, faces.DEFAULT_FLOOR)
         print(f"scanned {done} photo(s), {skipped} already cached [{faces.pipeline_id(det)}]")
         return 0
