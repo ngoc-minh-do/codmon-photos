@@ -179,6 +179,29 @@ def test_open_db_is_idempotent(tmp_path):
     faces.open_db(path).close()
     db = sqlite3.connect(path)
     assert db.execute("SELECT COUNT(*) FROM photos").fetchone() == (0,)
+    assert db.execute("PRAGMA user_version").fetchone()[0] == faces.SCHEMA_VERSION
+
+
+def test_open_db_rebuilds_an_older_cache(tmp_path, capsys):
+    path = tmp_path / "faces.db"
+    legacy = sqlite3.connect(path)
+    legacy.executescript(
+        faces.SCHEMA.replace("pipeline TEXT NOT NULL,", "")
+        .replace("PRIMARY KEY (sha1, pipeline)", "PRIMARY KEY (sha1)")
+        .replace("PRIMARY KEY (sha1, pipeline, idx)", "PRIMARY KEY (sha1, idx)")
+        .replace("PRIMARY KEY (person, pipeline, source)", "PRIMARY KEY (person, source)")
+    )
+    legacy.execute("INSERT INTO refs (person, source, crop, emb) VALUES ('kid','s','c',?)", (b"old",))
+    legacy.commit()
+    legacy.close()
+
+    db = faces.open_db(path)  # must not raise "no such column: pipeline"
+
+    assert "rebuilding" in capsys.readouterr().out
+    assert db.execute("SELECT COUNT(*) FROM refs").fetchone() == (0,), "stale rows are dropped"
+    assert db.execute("PRAGMA user_version").fetchone()[0] == faces.SCHEMA_VERSION
+    add_ref(db, person="kid")  # the pipeline column exists now
+    assert faces.detector_of(db.execute("SELECT pipeline FROM refs").fetchone()[0]) == "yunet"
 
 
 def test_pipeline_id_separates_detectors_and_floor():

@@ -115,6 +115,9 @@ CREATE TABLE IF NOT EXISTS refs (
 # Bump when the stored vectors would change for the same inputs (detector set,
 # recognition model, alignment template, or the detection floor).
 PIPELINE_VERSION = "v2"
+# Bump when the table shapes change; an older cache is rebuilt from scratch.
+SCHEMA_VERSION = 3
+CACHE_TABLES = ("faces", "photos", "refs")
 
 
 # --- models -----------------------------------------------------------------
@@ -395,8 +398,26 @@ def score_faces(faces, gallery: np.ndarray) -> tuple[float, int]:
 
 
 def open_db(path: Path = DEFAULT_DB) -> sqlite3.Connection:
+    """Open the cache, rebuilding it when it was written by an older schema.
+
+    The cache only holds values that can be recomputed from the photos, so a
+    shape change drops the tables instead of migrating them.
+    """
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path)
+    version = db.execute("PRAGMA user_version").fetchone()[0]
+    if version != SCHEMA_VERSION:
+        present = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        stale = present & set(CACHE_TABLES)
+        if stale:
+            print(f"   cache schema changed (v{version} -> v{SCHEMA_VERSION}); rebuilding {path}")
+        for table in CACHE_TABLES:
+            db.execute(f"DROP TABLE IF EXISTS {table}")
+        db.executescript(SCHEMA)
+        db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        db.commit()
+        return db
     db.executescript(SCHEMA)
     return db
 
