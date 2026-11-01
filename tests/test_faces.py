@@ -479,3 +479,81 @@ def test_failed_re_enroll_keeps_the_previous_gallery(tmp_path, monkeypatch):
 
     assert db.execute("SELECT COUNT(*) FROM refs").fetchone()[0] == before
     assert sorted(p.name for p in (crop_root / "kid" / "yunet").iterdir()) == crops_before
+
+
+def test_verdict_and_badges():
+    assert faces.verdict({"faces": 2, "score": 0.50}, 0.45) == "matched"
+    assert faces.verdict({"faces": 2, "score": 0.44}, 0.45) == "below"
+    assert faces.verdict({"faces": 0, "score": 0.00}, 0.45) == "unknown"
+    assert faces.BADGES["matched"] == ("ok", "MATCH")
+    assert faces.BADGES["unknown"] == ("warn", "no face")
+
+
+def test_face_box_style_is_percentage_of_the_image():
+    style = faces.face_box_style((150, 50, 75, 100), 750, 500)
+    assert style == "left:20.00%;top:10.00%;width:10.00%;height:20.00%"
+    assert faces.face_box_style(None, 750, 500) == ""
+    assert faces.face_box_style((1, 2, 3, 4), 0, 0) == ""
+
+
+def test_image_src_is_relative_and_not_double_encoded(tmp_path):
+    sheet = tmp_path / ".cache" / "report.html"
+    photo = tmp_path / "downloads" / "2026-05-11_〈全クラス〉春" / "IMG_5706%281%29.JPG"
+    src = faces.image_src(photo, sheet)
+    assert src == "../downloads/2026-05-11_〈全クラス〉春/IMG_5706%281%29.JPG"
+    assert (sheet.parent / src).exists() is False  # file not created; the path shape is what matters
+    assert "%2528" not in src, "existing %28 escapes must survive"
+
+
+def _report_rows(tmp_path, scores=(0.6, 0.4, 0.0)):
+    album = tmp_path / "downloads" / "album"
+    album.mkdir(parents=True)
+    rows = []
+    for i, score in enumerate(scores):
+        path = album / f"p{i}.jpg"
+        path.write_bytes(b"x")
+        rows.append(
+            {
+                "album": "album",
+                "pipeline": PIPE,
+                "path": path,
+                "root": tmp_path / "downloads",
+                "score": score,
+                "faces": 0 if score == 0.0 else 1,
+                "face_width": 60.0 if score else 0.0,
+                "best_box": (100, 50, 60, 80) if score else None,
+                "width": 750,
+                "height": 500,
+            }
+        )
+    return rows
+
+
+def test_report_links_photos_and_badges_every_state(tmp_path):
+    db = faces.open_db(tmp_path / "faces.db")
+    add_ref(db)
+    out = tmp_path / ".cache" / "report-kid-yunet.html"
+
+    faces.write_report(db, "kid", _report_rows(tmp_path), out, 0.45, 40)
+    html_text = out.read_text()
+
+    assert "data:image" not in html_text, "images must be referenced, not embedded"
+    assert 'src=""' not in html_text, "no broken image for photos without a face"
+    assert "../downloads/album/p0.jpg" in html_text
+    assert ">MATCH<" in html_text and ">below<" in html_text and ">no face<" in html_text
+    assert 'class="box" style="left:13.33%;top:10.00%;width:8.00%;height:16.00%"' in html_text
+    assert out.stat().st_size < 20_000, "sheet stays small"
+
+
+def test_report_only_filters_to_one_verdict(tmp_path):
+    db = faces.open_db(tmp_path / "faces.db")
+    add_ref(db)
+    rows = _report_rows(tmp_path)
+    out = tmp_path / ".cache" / "only.html"
+
+    faces.write_report(db, "kid", rows, out, 0.45, 40, only="matched")
+    html_text = out.read_text()
+    assert html_text.count('class="card"') == 2, "one reference card + the single match"
+    assert html_text.count('class="card"') == 2 and "p1.jpg" not in html_text and "p2.jpg" not in html_text
+    assert ">below<" not in html_text and ">no face<" not in html_text
+    assert "showing matched only" in html_text

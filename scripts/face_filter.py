@@ -82,10 +82,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("scan", parents=[common], help="detect + embed every photo (cached per content+detector)")
 
-    p = sub.add_parser("report", parents=[common], help="write .cache/report-<name>.html and print the threshold sweep")
+    p = sub.add_parser(
+        "report", parents=[common], help="write .cache/report-<name>-<detector>.html and print the threshold sweep"
+    )
     p.add_argument("person")
     p.add_argument("--threshold", type=float, default=faces.DEFAULT_THRESHOLD)
-    p.add_argument("--out", type=Path, default=None)
+    p.add_argument("--out", type=Path, default=None, help="sheet path (default: .cache/report-<name>-<detector>.html)")
+    p.add_argument(
+        "--only",
+        choices=("all", "matched", "below", "unknown"),
+        default="all",
+        help="render only one verdict (default: all)",
+    )
 
     p = sub.add_parser("export", parents=[common], help="copy matching photos to matched/<name>/<album>/")
     p.add_argument("person")
@@ -186,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
 
     rows = faces.collect(db, args.person, args.photos, args.min_face, faces.pipeline_for(db, args.detector))
     if args.cmd == "report":
-        out = args.out or args.db.parent / f"report-{args.person}.html"
+        out = args.out or args.db.parent / f"report-{args.person}-{args.detector}.html"
         print("threshold  photos kept  share")
         for threshold, kept, share in faces.sweep(rows):
             mark = "  <- current" if abs(threshold - args.threshold) < 1e-9 else ""
@@ -194,7 +202,8 @@ def main(argv: list[str] | None = None) -> int:
         unknown = sum(1 for row in rows if not row["faces"])
         if unknown:
             print(f"{unknown} photo(s) have no face wider than {args.min_face:.0f}px and are never counted as hers")
-        print(f"wrote {faces.write_report(db, args.person, rows, out, args.threshold, args.min_face)}")
+        sheet = faces.write_report(db, args.person, rows, out, args.threshold, args.min_face, args.only)
+        print(f"wrote {sheet}")
         return 0
 
     stats = faces.export_matches(

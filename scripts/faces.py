@@ -24,8 +24,8 @@ folders are never modified.
 
 from __future__ import annotations
 
-import base64
 import hashlib
+import html
 import os
 import shutil
 import sqlite3
@@ -632,9 +632,13 @@ def collect(
     for root in roots:
         for album in album_dirs(root):
             for path in photo_files(album):
-                faces = [f for f in load_faces(db, file_sha1(path), pipeline) if f[0][2] >= min_face]
+                sha1 = file_sha1(path)
+                faces = [f for f in load_faces(db, sha1, pipeline) if f[0][2] >= min_face]
                 score, idx = score_faces(faces, gal)
                 best_box = faces[idx][0] if idx >= 0 else None
+                size = db.execute(
+                    "SELECT width, height FROM photos WHERE sha1 = ? AND pipeline = ?", (sha1, pipeline)
+                ).fetchone() or (0, 0)
                 rows.append(
                     {
                         "album": album.name,
@@ -645,6 +649,8 @@ def collect(
                         "faces": len(faces),
                         "face_width": best_box[2] if best_box else 0.0,
                         "best_box": best_box,
+                        "width": size[0],
+                        "height": size[1],
                     }
                 )
     return rows
@@ -834,95 +840,114 @@ def compare_report(stats: dict, found: list[dict], threshold: float) -> str:
 # --- review report ----------------------------------------------------------
 
 
-def _thumb_b64(img, max_w: int = 420) -> str:
-    import cv2
-
-    h, w = img.shape[:2]
-    small = cv2.resize(img, (int(w * min(1.0, max_w / w)), int(h * min(1.0, max_w / w))))
-    ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 72])
-    return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode() if ok else ""
-
-
-def _crop_b64(img, box, margin: float = 0.35, height: int = 140) -> str:
-    import cv2
-
-    if box is None:
-        return ""
-    x, y, w, h = box
-    dx, dy = w * margin, h * margin
-    patch = img[
-        max(0, int(y - dy)) : min(img.shape[0], int(y + h + dy)),
-        max(0, int(x - dx)) : min(img.shape[1], int(x + w + dx)),
-    ]
-    if patch.size == 0:
-        return ""
-    patch = cv2.resize(patch, (max(1, int(height * patch.shape[1] / patch.shape[0])), height))
-    ok, buf = cv2.imencode(".jpg", patch, [cv2.IMWRITE_JPEG_QUALITY, 82])
-    return "data:image/jpeg;base64," + base64.b64encode(buf.tobytes()).decode() if ok else ""
-
-
-def _file_b64(path: Path) -> str:
-    data = path.read_bytes() if path.exists() else b""
-    return "data:image/jpeg;base64," + base64.b64encode(data).decode() if data else ""
-
-
 REPORT_CSS = """
 body{font:14px/1.45 system-ui,sans-serif;background:#111;color:#ddd;margin:24px}
 h1{font-size:18px} h2{font-size:15px;margin-top:26px;border-bottom:1px solid #333;padding-bottom:4px}
 table{border-collapse:collapse;margin:6px 0} td,th{padding:2px 10px;border-bottom:1px solid #262626;text-align:left}
-.card{display:inline-block;vertical-align:top;width:430px;margin:6px;background:#1a1a1a;border-radius:6px;padding:8px}
-.card img.ph{width:100%;border-radius:4px} .row{display:flex;gap:8px;align-items:center;margin-top:4px}
-.score{font-weight:700;font-variant-numeric:tabular-nums} .warn{color:#f0a020} .ok{color:#5ec26a} .muted{color:#777}
+.card{display:inline-block;vertical-align:top;width:440px;margin:6px;background:#1a1a1a;border-radius:6px;padding:8px}
+.frame{position:relative;display:block}
+.frame img{width:100%;border-radius:4px;display:block}
+.box{position:absolute;border:2px solid #5ec26a;border-radius:1px;box-shadow:0 0 0 1px #0006}
+.row{display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap}
+.badge{font:600 11px ui-monospace,monospace;padding:2px 6px;border-radius:3px;background:#2a2a2a;color:#bbb}
+.badge.ok{background:#1f3d24;color:#7ddc89} .badge.warn{background:#3d3018;color:#f0a020}
+.score{font-weight:700;font-variant-numeric:tabular-nums} .muted{color:#777}
 .path{font:11px ui-monospace,monospace;color:#888;word-break:break-all}
 """
 
+BADGES = {"matched": ("ok", "MATCH"), "below": ("", "below"), "unknown": ("warn", "no face")}
+
+
+def verdict(row: dict, threshold: float) -> str:
+    """``matched`` / ``below`` / ``unknown`` — the same rule ``export`` uses."""
+    if not row["faces"]:
+        return "unknown"
+    return "matched" if row["score"] >= threshold else "below"
+
+
+def image_src(path: Path, out: Path) -> str:
+    """Relative URL from the sheet to the album photo, so nothing is embedded.
+
+    Paths are emitted raw (only HTML-escaped): album names are UTF-8 on disk and
+    some CDN filenames already carry literal ``%28``-style escapes, so
+    percent-encoding here would double-encode both.
+    """
+    return html.escape(os.path.relpath(path, out.parent), quote=True)
+
+
+def face_box_style(box, width: int, height: int) -> str:
+    """CSS percentages placing a face box over the photo at any display size."""
+    if not box or not width or not height:
+        return ""
+    x, y, w, h = box
+    return (
+        f"left:{x / width * 100:.2f}%;top:{y / height * 100:.2f}%;"
+        f"width:{w / width * 100:.2f}%;height:{h / height * 100:.2f}%"
+    )
+
 
 def write_report(
-    db: sqlite3.Connection, person: str, rows: list[dict], out: Path, threshold: float, min_face: float
+    db: sqlite3.Connection,
+    person: str,
+    rows: list[dict],
+    out: Path,
+    threshold: float,
+    min_face: float,
+    only: str = "all",
 ) -> Path:
-    """Self-contained HTML review sheet: every photo, its best score and face crop."""
-    import cv2
+    """Self-contained-by-reference HTML sheet: photos are linked, not embedded.
 
+    Each card carries a text badge (``MATCH`` / ``below`` / ``no face``) plus the
+    score, the band and a box drawn over the photo where the best face was. Since
+    the album JPEGs are referenced relatively, the sheet is a few hundred KB and
+    re-running at another threshold never re-encodes an image.
+    """
     out.parent.mkdir(parents=True, exist_ok=True)
-    parts = [f"<h1>Scores for {person!r} — threshold {threshold:.2f}, min face {min_face:.0f}px</h1>"]
+    shown = [r for r in rows if only == "all" or verdict(r, threshold) == only]
+    parts = [f"<h1>Scores for {person!r} — threshold {threshold:.2f}, min face {min_face:.0f}px"]
+    if only != "all":
+        parts[0] += f", showing {only} only"
+    parts.append("</h1>")
+
     parts.append("<h2>Enrolled references (verify these are all her)</h2><div>")
     query = "SELECT source, crop FROM refs WHERE person = ? AND pipeline = ? ORDER BY source"
-    for source, crop in db.execute(query, (person, rows[0]["pipeline"] if rows else "")):
+    pipeline = rows[0]["pipeline"] if rows else ""
+    for source, crop in db.execute(query, (person, pipeline)):
         parts.append(
-            f'<span class="card" style="width:140px"><img class="ph" src="{_file_b64(Path(crop))}">'
+            f'<span class="card" style="width:140px"><img loading="lazy" '
+            f'src="{image_src(Path(crop), out)}">'
             f'<div class="path">{Path(source).name}</div></span>'
         )
     parts.append("</div>")
 
     unknown = sum(1 for r in rows if not r["faces"])
-    parts.append(f"<h2>{len(rows)} photos, {unknown} with no usable face (&lt; {min_face:.0f}px)</h2>")
+    parts.append(f"<h2>{len(rows)} photos, {unknown} with no usable face (&lt; {min_face:.0f}px)")
+    if only != "all":
+        parts[-1] += f", {len(shown)} shown"
+    parts.append("</h2>")
     parts.append("<table><tr><th>threshold</th><th>photos kept</th><th>share kept</th></tr>")
     parts.extend(f"<tr><td>{t:.2f}</td><td>{kept}</td><td>{share:.0f}%</td></tr>" for t, kept, share in sweep(rows))
     parts.append("</table>")
 
-    for album in sorted({r["album"] for r in rows}):
-        group = [r for r in rows if r["album"] == album]
-        hits = sum(1 for r in group if r["faces"] and r["score"] >= threshold)
-        misses = sum(1 for r in group if not r["faces"])
-        parts.append(f"<h2>{album} — {len(group)} photos, {hits} at {threshold:.2f}, {misses} unusable</h2>")
+    for album in sorted({r["album"] for r in shown}):
+        group = [r for r in shown if r["album"] == album]
+        hits = sum(1 for r in group if verdict(r, threshold) == "matched")
+        parts.append(f"<h2>{album} — {len(group)} photos, {hits} at {threshold:.2f}</h2>")
         for r in sorted(group, key=lambda r: -r["score"]):
-            img = cv2.imread(str(r["path"]))
-            if img is None:
-                continue
-            keep = bool(r["faces"]) and r["score"] >= threshold
-            cls = "ok" if keep else ("warn" if not r["faces"] else "")
-            note = "no usable face" if not r["faces"] else f"{r['faces']} face(s) ≥ {min_face:.0f}px"
+            state = verdict(r, threshold)
+            cls, label = BADGES[state]
+            box = face_box_style(r["best_box"], r.get("width", 0), r.get("height", 0))
             parts.append(
-                f'<div class="card"><img class="ph" src="{_thumb_b64(img)}">'
-                f'<div class="row"><span class="score {cls}">{r["score"]:.3f}</span>'
+                f'<div class="card"><span class="frame">'
+                f'<img loading="lazy" src="{image_src(r["path"], out)}">'
+                f"{f'<span class="box" style="{box}"></span>' if box else ''}</span>"
+                f'<div class="row"><span class="badge {cls}">{label}</span>'
+                f'<span class="score">{r["score"]:.3f}</span>'
                 f'<span class="muted">{band_of(r["score"])}</span>'
-                f'<img src="{_crop_b64(img, r["best_box"])}" style="height:70px">'
-                f'<span class="muted">{note}</span></div>'
+                f'<span class="muted">{r["faces"]} face(s) ≥ {min_face:.0f}px</span></div>'
                 f'<div class="path">{r["path"].relative_to(r["root"])}</div></div>'
             )
 
-    html = f"<!doctype html><meta charset=utf-8><title>face review</title><style>{REPORT_CSS}</style>\n" + "\n".join(
-        parts
-    )
-    out.write_text(html, encoding="utf-8")
+    html = f"<!doctype html><meta charset=utf-8><title>face review — {person}</title><style>{REPORT_CSS}</style>\n"
+    out.write_text(html + "\n".join(parts), encoding="utf-8")
     return out
