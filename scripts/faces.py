@@ -7,9 +7,10 @@ lives in ``.cache/faces.db`` (sqlite), and the ONNX models in ``.cache/models``.
 Two-stage pipeline, both plain ONNX/OpenCV:
 
 1. **detect** — a detector finds faces and 5 landmarks. Two are available and
-   interchangeable: ``yunet`` (OpenCV, finds more of the tiny faces a 500px CDN
-   photo leaves behind) and ``scrfd`` (``det_10g``, the detector inside
-   InsightFace's buffalo_l).
+   interchangeable: ``scrfd`` (``det_10g``, the detector inside InsightFace's
+   buffalo_l — the default, because its landmarks stay accurate on faces that
+   are tilted or turned) and ``yunet`` (OpenCV, finds more of the tiny faces a
+   500px CDN photo leaves behind, but misplaces landmarks on some of them).
 2. **recognize** — the 5 landmarks are aligned to the ArcFace template and fed
    to ArcFace (``w600k_r50``, the recognition half of buffalo_l), yielding a
    512-d embedding per face.
@@ -62,7 +63,8 @@ ARC_TEMPLATE = np.array(
 # An existing ~/.insightface copy is reused instead of downloading.
 YUNET = "yunet"
 SCRFD = "scrfd"
-DETECTORS = (YUNET, SCRFD)
+DETECTORS = (SCRFD, YUNET)
+DEFAULT_DETECTOR = SCRFD
 
 MODELS = {
     # single-file models: (url, sha256)
@@ -339,7 +341,7 @@ def make_recognizer(model_path: Path):
     return sess, sess.get_inputs()[0].name
 
 
-def load_models(detector: str = YUNET, models_dir: Path = DEFAULT_MODELS, det_score: float | None = None):
+def load_models(detector: str = DEFAULT_DETECTOR, models_dir: Path = DEFAULT_MODELS, det_score: float | None = None):
     """(detector, recognizer) for ``detector``; downloads/verifies both models."""
     det = make_detector(detector, ensure_model(detector, models_dir), det_score)
     return det, make_recognizer(ensure_model("arcface", models_dir))

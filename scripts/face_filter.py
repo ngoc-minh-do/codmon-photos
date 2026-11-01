@@ -65,14 +65,14 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--detector",
         choices=faces.DETECTORS,
-        default=faces.YUNET,
-        help=f"face detector to use; scans are cached per detector (default: {faces.YUNET})",
+        default=faces.DEFAULT_DETECTOR,
+        help=f"face detector to use; scans are cached per detector (default: {faces.DEFAULT_DETECTOR})",
     )
     common.add_argument(
         "--det-score",
         type=float,
         default=None,
-        help="detector confidence threshold (default: 0.6 yunet, 0.5 scrfd); part of the cache key",
+        help="detector confidence threshold (default: 0.5 scrfd, 0.6 yunet); part of the cache key",
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -190,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
         if len(pair) < 2:
             raise SystemExit(
                 f"need two scanned detectors to compare; cached: {[faces.detector_of(p) for p in faces.pipelines(db)]} "
-                "— run scan --detector yunet and scan --detector scrfd first"
+                "— run scan --detector scrfd and scan --detector yunet first"
             )
         rows_by_pipeline = {p: faces.collect(db, args.person, args.photos, args.min_face, p) for p in pair[:2]}
         stats = faces.compare(rows_by_pipeline, args.threshold)

@@ -69,13 +69,14 @@ uv run scripts/face_filter.py export <name> --threshold 0.50 --yes
 uv run scripts/face_filter.py upload <name> --yes   # optional: mirror to the NAS
 ```
 
-Two detectors are available: `--detector yunet` (default, finds more of the tiny
-faces a 500px CDN photo leaves behind) and `--detector scrfd` (buffalo_l's
-`det_10g`). Scans are cached per detector, so both can be run and compared:
+Two detectors are available: `--detector scrfd` (default, buffalo_l's `det_10g`)
+and `--detector yunet` (finds more of the tiny faces a 500px CDN photo leaves
+behind, but its landmarks drift on tilted faces). Scans are cached per detector,
+so both can be run and compared:
 
 ```bash
-uv run scripts/face_filter.py scan --detector yunet
 uv run scripts/face_filter.py scan --detector scrfd
+uv run scripts/face_filter.py scan --detector yunet
 uv run scripts/face_filter.py compare <name> --threshold 0.45
 ```
 

@@ -31,7 +31,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   YuNet and embeddings are the ArcFace `w600k_r50` head, both plain ONNX;
   embeddings are cached by file content in `.cache/faces.db`, so changing the
   threshold never re-runs a model and never needs a re-scan.
-- Second face detector (SCRFD `det_10g`) selectable with `--detector`, plus a
+- SCRFD (`det_10g`) is the default detector, with `--detector yunet` as the
+  alternative; a second face detector selectable via `--detector`, plus a
   `compare` command that reports agreement, per-detector-only finds and score
   deltas. Cache rows are keyed by the full pipeline id, so detectors can be
   scanned side by side without one overwriting the other.
