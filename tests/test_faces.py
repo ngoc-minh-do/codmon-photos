@@ -557,3 +557,93 @@ def test_report_only_filters_to_one_verdict(tmp_path):
     assert html_text.count('class="card"') == 2 and "p1.jpg" not in html_text and "p2.jpg" not in html_text
     assert ">below<" not in html_text and ">no face<" not in html_text
     assert "showing matched only" in html_text
+
+
+def test_dispute_kind_separates_detection_from_boundary_noise():
+    same_two = {"faces": 2, "score": 0.46}
+    assert faces.dispute_kind({"faces": 2, "score": 0.44}, same_two) == "boundary"
+    assert faces.dispute_kind({"faces": 0, "score": 0.0}, {"faces": 1, "score": 0.6}) == "detection"
+    assert faces.dispute_kind({"faces": 5, "score": 0.29}, {"faces": 7, "score": 0.45}) == "detection"
+    assert faces.dispute_kind({"faces": 2, "score": 0.30}, same_two) == "score"
+
+
+def _pair_rows(tmp_path, specs):
+    """specs: list of (name, score_a, faces_a, score_b, faces_b)."""
+    album = tmp_path / "downloads" / "album"
+    album.mkdir(parents=True, exist_ok=True)
+    a_rows, b_rows = [], []
+    for name, sa, fa, sb, fb in specs:
+        path = album / name
+        path.write_bytes(b"x")
+        for rows, score, n in ((a_rows, sa, fa), (b_rows, sb, fb)):
+            rows.append(
+                {
+                    "album": "album",
+                    "pipeline": PIPE if rows is a_rows else OTHER_PIPE,
+                    "path": path,
+                    "root": tmp_path / "downloads",
+                    "score": score,
+                    "faces": n,
+                    "face_width": 60.0 if n else 0.0,
+                    "best_box": (100, 50, 60, 80) if n else None,
+                    "width": 750,
+                    "height": 500,
+                }
+            )
+    return {PIPE: a_rows, OTHER_PIPE: b_rows}
+
+
+def test_disagreements_carry_their_kind(tmp_path):
+    rows = _pair_rows(
+        tmp_path,
+        [
+            ("detect.jpg", 0.20, 2, 0.60, 1),  # counts differ
+            ("noise.jpg", 0.44, 2, 0.46, 2),  # within 0.05
+            ("gap.jpg", 0.30, 2, 0.70, 2),  # same faces, big gap
+            ("agree.jpg", 0.60, 2, 0.62, 2),  # no dispute
+        ],
+    )
+    found = {d["name"]: d["kind"] for d in faces.disagreements(rows, 0.45)}
+    assert found == {"detect.jpg": "detection", "noise.jpg": "boundary", "gap.jpg": "score"}
+
+
+def test_comparison_groups_counts_and_seeded_samples(tmp_path):
+    specs = [("d.jpg", 0.2, 2, 0.6, 1), ("n.jpg", 0.44, 2, 0.46, 2), ("g.jpg", 0.3, 2, 0.7, 2)]
+    specs += [(f"both{i}.jpg", 0.6, 1, 0.6, 1) for i in range(5)]
+    specs += [(f"none{i}.jpg", 0.1, 1, 0.1, 1) for i in range(5)]
+    rows = _pair_rows(tmp_path, specs)
+
+    groups, sampled, totals = faces.comparison_groups(rows, 0.45, sample=3, seed=7)
+
+    assert {k: len(v) for k, v in groups.items()} == {"detection": 1, "score": 1, "boundary": 1}
+    assert totals == {"both": 5, "neither": 5}
+    assert len(sampled["both"]) == 3 and len(sampled["neither"]) == 3
+    again = faces.comparison_groups(rows, 0.45, sample=3, seed=7)
+    assert [k for k, _a, _b in sampled["both"]] == [k for k, _a, _b in again[1]["both"]], "sampling is seeded"
+
+
+def test_comparison_sheet_renders_two_panes_and_no_embedded_images(tmp_path):
+    db = faces.open_db(tmp_path / "faces.db")
+    rows = _pair_rows(tmp_path, [("one.jpg", 0.2, 2, 0.6, 1), ("two.jpg", 0.6, 1, 0.6, 1)])
+    for pipeline, pipeline_rows in rows.items():
+        for row in pipeline_rows:
+            faces.store_photo(
+                db,
+                faces.file_sha1(row["path"]),
+                (750, 500),
+                pipeline,
+                [((100, 50, 60, 80), 0.9, np.ones(4, dtype=np.float32))],
+            )
+    stats = faces.compare(rows, 0.45)
+    out = tmp_path / ".cache" / "compare-kid-yunet-scrfd.html"
+
+    faces.write_comparison(db, rows, stats, out, 0.45, 40, sample=1)
+    html_text = out.read_text()
+
+    assert html_text.count('class="pane-a"') == 2 and html_text.count('class="pane-b"') == 2
+    assert html_text.count('class="box best"') == 4, "each pane draws its best face"
+    assert "data:image" not in html_text and 'src=""' not in html_text
+    assert "../downloads/album/one.jpg" in html_text
+    assert ">detection<" in html_text or 'class="kind">detection<' in html_text
+    assert "<details>" in html_text, "agreed buckets are folded away"
+    assert "Detection differences — the detectors saw a different number of faces" in html_text

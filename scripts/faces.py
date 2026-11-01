@@ -775,8 +775,21 @@ def compare(rows_by_pipeline: dict[str, list[dict]], threshold: float) -> dict:
     }
 
 
-def disagreements(rows_by_pipeline: dict[str, list[dict]], threshold: float, limit: int = 20) -> list[dict]:
-    """Photos the two pipelines classify differently, most face-width change first."""
+def dispute_kind(a: dict, b: dict, noise: float = 0.05) -> str:
+    """Why two detectors disagree on a photo.
+
+    ``detection`` — they found a different number of faces (one may have found
+    none at all): real evidence about detection. ``boundary`` — same faces, and
+    the scores differ by less than ``noise``: the photo just sits on the cutoff.
+    ``score`` — same faces, but the similarity moved more than that.
+    """
+    if a["faces"] != b["faces"]:
+        return "detection"
+    return "boundary" if abs(b["score"] - a["score"]) <= noise else "score"
+
+
+def disagreements(rows_by_pipeline: dict[str, list[dict]], threshold: float, limit: int = 0) -> list[dict]:
+    """Photos the two pipelines classify differently, split by reason."""
     a, b = list(rows_by_pipeline)[:2]
     index = {k: {(r["album"], r["path"].name): r for r in rows_by_pipeline[k]} for k in (a, b)}
     out = []
@@ -793,19 +806,158 @@ def disagreements(rows_by_pipeline: dict[str, list[dict]], threshold: float, lim
                 "b": rb,
                 "winner": a if ha else b,
                 "width_delta": rb["face_width"] - ra["face_width"],
+                "kind": dispute_kind(ra, rb),
             }
         )
     out.sort(key=lambda d: -abs(d["width_delta"]))
-    return out[:limit]
+    return out[:limit] if limit else out
 
 
-def compare_report(stats: dict, found: list[dict], threshold: float) -> str:
-    """Terminal summary of a detector comparison: a 2x2 table plus score deltas.
+KIND_ORDER = ("detection", "score", "boundary")
+KIND_TITLES = {
+    "detection": "Detection differences — the detectors saw a different number of faces",
+    "score": "Score gaps — same faces, similarity moved",
+    "boundary": "Boundary noise — same faces, scores within 0.05 of each other",
+}
 
-    The four counts are disjoint and add up to the shared photos; a detector's
-    own total is ``both + only that detector``, and ``union`` is photos kept by
-    either one.
+
+def comparison_groups(rows_by_pipeline: dict[str, list[dict]], threshold: float, sample: int = 20, seed: int = 0):
+    """Disputes by kind (complete), plus random samples of the agreed buckets."""
+    import random
+
+    a, b = list(rows_by_pipeline)[:2]
+    index = {k: {(r["album"], r["path"].name): r for r in rows_by_pipeline[k]} for k in (a, b)}
+    groups = {kind: [] for kind in KIND_ORDER}
+    both, neither = [], []
+    for key in sorted(set(index[a]) & set(index[b])):
+        ra, rb = index[a][key], index[b][key]
+        ha, hb = ra["faces"] and ra["score"] >= threshold, rb["faces"] and rb["score"] >= threshold
+        if ha and hb:
+            both.append((key, ra, rb))
+        elif not ha and not hb:
+            neither.append((key, ra, rb))
+        else:
+            groups[dispute_kind(ra, rb)].append((key, ra, rb))
+    rng = random.Random(seed)
+    sampled = {
+        "both": rng.sample(both, min(sample, len(both))),
+        "neither": rng.sample(neither, min(sample, len(neither))),
+    }
+    return groups, sampled, {"both": len(both), "neither": len(neither)}
+
+
+COMPARE_CSS = """
+body{font:14px/1.45 system-ui,sans-serif;background:#111;color:#ddd;margin:24px}
+h1{font-size:18px} h2{font-size:15px;margin-top:26px;border-bottom:1px solid #333;padding-bottom:4px}
+h3{font-size:13px;color:#999;font-weight:600;margin:18px 0 6px}
+table{border-collapse:collapse;margin:6px 0} td,th{padding:2px 10px;border-bottom:1px solid #262626;text-align:left}
+.card{background:#1a1a1a;border-radius:6px;padding:8px;margin:10px 0}
+.panes{display:flex;gap:8px}
+.pane{flex:1;position:relative}
+.pane img{width:100%;border-radius:4px;display:block}
+.pane .tag{font:600 11px ui-monospace,monospace;color:#888;margin-bottom:3px}
+.box{position:absolute;border:2px solid #666;border-radius:1px}
+.pane-a .box{border-color:#3fb6d3} .pane-b .box{border-color:#e08a2b}
+.box.best{border-width:3px;box-shadow:0 0 0 1px #0006}
+.row{display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap}
+.badge{font:600 11px ui-monospace,monospace;padding:2px 6px;border-radius:3px;background:#2a2a2a;color:#bbb}
+.badge.hit{background:#1f3d24;color:#7ddc89} .badge.miss{background:#3d1f1f;color:#e07a7a}
+.kind{font:600 11px ui-monospace,monospace;color:#999}
+.muted{color:#777} .path{font:11px ui-monospace,monospace;color:#888;word-break:break-all}
+details{margin-top:14px} summary{cursor:pointer;color:#999}
+"""
+
+
+def write_comparison(
+    db: sqlite3.Connection,
+    rows_by_pipeline: dict[str, list[dict]],
+    stats: dict,
+    out: Path,
+    threshold: float,
+    min_face: float = DEFAULT_MIN_FACE,
+    sample: int = 20,
+) -> Path:
+    """Side-by-side sheet: the same photo rendered once per detector, boxes drawn.
+
+    Detection differences come first — those are the only rows that say anything
+    about which detector sees better. Boundary noise and the agreed buckets are
+    folded into <details> so they are available without drowning the page.
     """
+    a, b = stats["pipelines"]
+    da, db_name = detector_of(a), detector_of(b)
+    groups, sampled, totals = comparison_groups(rows_by_pipeline, threshold, sample)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    parts = [
+        f"<h1>{da} vs {db_name} — threshold {threshold:.2f}, min face {min_face:.0f}px</h1>",
+        f"<table><tr><th></th><th>{db_name} hit</th><th>{db_name} miss</th><th>total</th></tr>",
+        f"<tr><th>{da} hit</th><td>{stats['both']}</td><td>{stats['only_a']}</td><td>{stats['hit_a']}</td></tr>",
+        f"<tr><th>{da} miss</th><td>{stats['only_b']}</td><td>{stats['neither']}</td>"
+        f"<td>{stats['shared'] - stats['hit_a']}</td></tr>",
+        f"<tr><th>total</th><td>{stats['hit_b']}</td><td>{stats['shared'] - stats['hit_b']}</td>"
+        f"<td>{stats['shared']}</td></tr></table>",
+        f"<p>both {stats['both']} · only {da} {stats['only_a']} · only {db_name} {stats['only_b']} · "
+        f"neither {stats['neither']} · either {stats['union']} · "
+        f"agree {stats['agree']}/{stats['shared']} ({stats['agree'] / (stats['shared'] or 1) * 100:.0f}%)</p>",
+        f"<p class='muted'>{len(groups['detection'])} detection differences · "
+        f"{len(groups['score'])} score gaps · {len(groups['boundary'])} boundary noise</p>",
+    ]
+
+    def render(key, ra, rb, kind):  # noqa: ANN001
+        album, name = key
+        parts_html = [f'<div class="card"><div class="path">{album}/{name}</div><div class="panes">']
+        for cls, pipeline, row in (("pane-a", a, ra), ("pane-b", b, rb)):
+            hit = bool(row["faces"]) and row["score"] >= threshold
+            detail = (
+                f'<div class="row"><span class="badge {"hit" if hit else "miss"}">'
+                f"{'hit' if hit else 'miss'}</span><span>{row['score']:.3f}</span>"
+                f'<span class="muted">{row["faces"]} face(s)</span></div>'
+            )
+            faces = [f for f in load_faces(db, file_sha1(row["path"]), pipeline) if f[0][2] >= min_face]
+            boxes = "".join(
+                f'<span class="box{(" best" if row["best_box"] and box == row["best_box"] else "")}" '
+                f'style="{face_box_style(box, row.get("width", 0), row.get("height", 0))}"></span>'
+                for box, _s, _e in faces
+            )
+            pane = (
+                f'<div class="{cls}"><div class="tag">{detector_of(pipeline)}</div>'
+                f'<span class="frame"><img loading="lazy" src="{image_src(row["path"], out)}">{boxes}</span>'
+                f"{detail}</div>"
+            )
+            parts_html.append(pane)
+        parts_html.append("</div>")
+        if kind:
+            parts_html.append(f'<div class="row"><span class="kind">{kind}</span></div>')
+        parts_html.append("</div>")
+        return "".join(parts_html)
+
+    for kind in KIND_ORDER:
+        rows = groups[kind]
+        if not rows:
+            continue
+        body = "\n".join(render(key, ra, rb, kind) for key, ra, rb in rows)
+        if kind == "boundary":
+            parts.append(f"<details><summary>{KIND_TITLES[kind]} ({len(rows)})</summary>{body}</details>")
+        else:
+            parts.append(f"<h2>{KIND_TITLES[kind]} ({len(rows)})</h2>")
+            parts.append(body)
+
+    for bucket, title in (("both", "Both matched"), ("neither", "Neither matched")):
+        body = "\n".join(render(key, ra, rb, "") for key, ra, rb in sampled[bucket])
+        parts.append(
+            f"<details><summary>{title} — sample {len(sampled[bucket])} of {totals[bucket]}</summary>{body}</details>"
+        )
+
+    html_text = (
+        "<!doctype html><meta charset=utf-8><title>detector comparison</title>"
+        f"<style>{COMPARE_CSS}{REPORT_CSS}</style>\n" + "\n".join(parts)
+    )
+    out.write_text(html_text, encoding="utf-8")
+    return out
+
+
+def compare_report(stats: dict, found: list[dict], threshold: float, list_noise: bool = False) -> str:
+    """Terminal summary: the 2x2 table, then disputes grouped by reason."""
     a, b = stats["pipelines"]
     da, db = detector_of(a), detector_of(b)
     shared = stats["shared"]
@@ -828,12 +980,23 @@ def compare_report(stats: dict, found: list[dict], threshold: float) -> str:
             f"median {np.median(d):+.3f}, mean {d.mean():+.3f}, p10 {np.percentile(d, 10):+.3f}, "
             f"p90 {np.percentile(d, 90):+.3f}"
         )
-    for item in found:
-        lines.append(
-            f"  {detector_of(item['winner']):6s} only  {item['album']}/{item['name']}  "
-            f"{da}={item['a']['score']:.2f}/{item['a']['faces']}f  "
-            f"{db}={item['b']['score']:.2f}/{item['b']['faces']}f"
-        )
+    by_kind = {kind: [d for d in found if d["kind"] == kind] for kind in KIND_ORDER}
+    lines.append(
+        f"  {len(by_kind['detection'])} detection differences · {len(by_kind['score'])} score gaps · "
+        f"{len(by_kind['boundary'])} boundary noise (|delta| <= 0.05)"
+    )
+    for kind in KIND_ORDER:
+        rows = by_kind[kind]
+        if not rows or (kind == "boundary" and not list_noise):
+            continue
+        lines.append(f"  -- {kind} --")
+        for item in rows:
+            who = detector_of(item["winner"])
+            lines.append(
+                f"  {who:6s} only  {item['album']}/{item['name']}  "
+                f"{da}={item['a']['score']:.2f}/{item['a']['faces']}f  "
+                f"{db}={item['b']['score']:.2f}/{item['b']['faces']}f"
+            )
     return "\n".join(lines)
 
 

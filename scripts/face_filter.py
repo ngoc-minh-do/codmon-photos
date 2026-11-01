@@ -103,7 +103,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prune", action="store_true", help="delete earlier copies that no longer match")
     p.add_argument("--yes", action="store_true", help="actually write files (default: dry run)")
 
-    p = sub.add_parser("compare", help="side-by-side scores from two cached detectors")
+    p = sub.add_parser(
+        "compare",
+        help="compare two cached detectors: terminal table + .cache/compare-<name>-<a>-<b>.html",
+    )
     p.add_argument("person")
     p.add_argument("--threshold", type=float, default=faces.DEFAULT_THRESHOLD)
     p.add_argument(
@@ -113,6 +116,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="pair to compare (default: whatever two pipelines are cached)",
     )
+    p.add_argument("--sample", type=int, default=20, help="photos sampled from the agreed buckets (default 20)")
+    p.add_argument("--list-noise", action="store_true", help="also list boundary-noise rows in the terminal")
+    p.add_argument("--out", type=Path, default=None, help="sheet path (default: .cache/compare-<name>-<a>-<b>.html)")
 
     p = sub.add_parser("upload", help="mirror matched/<name>/ to the SMB share (<share>/<name>/<album>/)")
     p.add_argument("person")
@@ -189,7 +195,11 @@ def main(argv: list[str] | None = None) -> int:
         rows_by_pipeline = {p: faces.collect(db, args.person, args.photos, args.min_face, p) for p in pair[:2]}
         stats = faces.compare(rows_by_pipeline, args.threshold)
         found = faces.disagreements(rows_by_pipeline, args.threshold)
-        print(faces.compare_report(stats, found, args.threshold))
+        print(faces.compare_report(stats, found, args.threshold, args.list_noise))
+        a, b = stats["pipelines"]
+        out = args.out or args.db.parent / (f"compare-{args.person}-{faces.detector_of(a)}-{faces.detector_of(b)}.html")
+        sheet = faces.write_comparison(db, rows_by_pipeline, stats, out, args.threshold, args.min_face, args.sample)
+        print(f"wrote {sheet}")
         return 0
 
     rows = faces.collect(db, args.person, args.photos, args.min_face, faces.pipeline_for(db, args.detector))
