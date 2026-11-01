@@ -2,8 +2,7 @@
 
 Codmon exposes no public parent API, but parents.codmon.com is an SPA that
 talks to an internal JSON API (ps-api.codmon.com) using session cookies from a
-plain email/password login. This client mirrors the one used by the
-codmon-sync project: login sets the cookies, /children resolves
+plain email/password login. Login sets the cookies, /children resolves
 the nursery service_id (with use_image_edge=true so photo URLs come back
 signed for the CloudFront CDN), and a /timeline scan returns the photo albums
 (kind=8) whose ``photos`` array carries ``{id, url}`` entries.

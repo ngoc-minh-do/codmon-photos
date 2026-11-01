@@ -14,14 +14,13 @@ only the face filter's output (`matched/<name>/`) is mirrored to the share as
 `//<host>/<share>/<name>/<album>/`. Setting some but not all of them aborts.
 
 The scripts log directly into the Codmon parent API (`ps-api.codmon.com`,
-email/password session) — no browser, no pasted JSON — with the same internal
-API conventions as the sibling `codmon-sync` project. Recurring,
-roughly monthly task.
+email/password session) — no browser, no pasted JSON. Recurring, roughly
+monthly task.
 
 ## Commands
 
 ```bash
-cp .env.example .env   # fill CODMON_EMAIL / CODMON_PASSWORD (same creds as codmon-sync)
+cp .env.example .env   # fill CODMON_EMAIL / CODMON_PASSWORD
 uv sync                # first run: creates .venv, installs deps
 uv run scripts/codmon_sync.py                      # scan last 45 days, download every album found
 uv run scripts/codmon_sync.py --date 2026-10-05    # one specific day
