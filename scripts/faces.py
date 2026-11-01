@@ -60,7 +60,7 @@ ARC_TEMPLATE = np.array(
 )
 
 # (url, sha256). Buffalo_l ships as a zip; only the ArcFace head is extracted.
-# An existing ~/.insightface copy is reused instead of downloading.
+# Members come from one shared archive; nothing outside models_dir is read.
 YUNET = "yunet"
 SCRFD = "scrfd"
 DETECTORS = (SCRFD, YUNET)
@@ -144,8 +144,9 @@ def _download(url: str, dest: Path) -> None:
 
 
 def ensure_model(name: str, models_dir: Path = DEFAULT_MODELS) -> Path:
-    """Path to a verified model file, downloading it once when missing.
+    """Path to a verified model file inside ``models_dir``.
 
+    Models live only here — nothing outside the project is read or trusted.
     ``yunet`` is a single file; ``arcface`` and ``scrfd`` are members of the
     buffalo_l archive and are extracted together, so asking for either one only
     downloads the zip once.
@@ -155,9 +156,6 @@ def ensure_model(name: str, models_dir: Path = DEFAULT_MODELS) -> Path:
     if dest.exists() and sha256_file(dest) == want:
         return dest
     if name in BUFFALO_MEMBERS:
-        local = Path.home() / ".insightface/models/buffalo_l" / BUFFALO_MEMBERS[name]
-        if local.exists() and sha256_file(local) == want:
-            return local  # reuse insightface's copy instead of duplicating it
         archive = Path(models_dir) / "buffalo_l.zip"
         if not archive.exists():
             _download(url, archive)

@@ -1,3 +1,4 @@
+import hashlib
 import pathlib
 import sqlite3
 import types
@@ -655,3 +656,35 @@ def test_comparison_sheet_renders_two_panes_and_no_embedded_images(tmp_path):
     assert ">detection<" in html_text or 'class="kind">detection<' in html_text
     assert "<details>" in html_text, "agreed buckets are folded away"
     assert "Detection differences — the detectors saw a different number of faces" in html_text
+
+
+def test_ensure_model_extracts_buffalo_members_into_the_cache_only(tmp_path, monkeypatch):
+    """No path outside the models dir is consulted: archive -> extract -> verify."""
+    import io
+    import zipfile
+
+    payload = b"fake onnx bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("w600k_r50.onnx", payload)
+    archive_bytes = buffer.getvalue()
+
+    monkeypatch.setattr(faces, "MODELS", {**faces.MODELS, "arcface": ("http://unused", digest)})
+    monkeypatch.setattr(faces, "BUFFALO_MEMBERS", {"arcface": "w600k_r50.onnx"})
+    monkeypatch.setattr(faces, "MODEL_FILES", {**faces.MODEL_FILES, "arcface": "arcface_r50.onnx"})
+    monkeypatch.setattr(faces.Path, "home", classmethod(lambda cls: tmp_path / "nohome"))
+
+    def fake_download(url, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(archive_bytes)
+
+    monkeypatch.setattr(faces, "_download", fake_download)
+
+    models_dir = tmp_path / ".cache/models"
+    got = faces.ensure_model("arcface", models_dir)
+
+    assert got == models_dir / "arcface_r50.onnx"
+    assert got.read_bytes() == payload
+    assert not (models_dir / "buffalo_l.zip").exists(), "the archive is cleaned up"
+    assert not (tmp_path / "nohome").exists(), "no external model directory is touched"
