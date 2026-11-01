@@ -816,3 +816,37 @@ def test_render_report_can_serve_images_from_the_server(tmp_path):
 
     assert 'src="/photos/p0.jpg"' in html_text
     assert "../downloads/album" not in html_text, "no relative paths when served over http"
+
+
+def _reviewed_rows():
+    """Three keeps (two below any cutoff), three drops (two above it)."""
+
+    def row(name, score, override):
+        return {"rel": f"album/{name}", "album": "album", "score": score, "faces": 1, "override": override}
+
+    return [
+        row("k1.jpg", 0.20, "keep"),
+        row("k2.jpg", 0.40, "keep"),
+        row("k3.jpg", 0.70, "keep"),
+        row("d1.jpg", 0.30, "drop"),
+        row("d2.jpg", 0.60, "drop"),
+        row("d3.jpg", 0.90, "drop"),
+        row("u1.jpg", 0.80, None),  # unreviewed: not counted as ground truth
+    ]
+
+
+def test_evaluate_counts_what_each_threshold_agrees_with():
+    table = {row["threshold"]: row for row in faces.evaluate(_reviewed_rows(), edges=(0.45, 0.55))}
+
+    assert table[0.45]["keeps"] == 3 and table[0.45]["drops"] == 3
+    assert table[0.45]["keeps_matched"] == 1, "only k3 clears 0.45 without a pin"
+    assert table[0.45]["drops_matched"] == 2, "d2 and d3 would leak in at 0.45"
+    assert table[0.55]["keeps_matched"] == 1
+    assert table[0.55]["drops_matched"] == 2
+
+
+def test_evaluate_report_states_reviewed_and_pinned_counts():
+    text = faces.evaluate_report(_reviewed_rows(), edges=(0.45,))
+    assert "6 reviewed of 7 photos (3 keep, 3 drop)" in text, "unreviewed rows are excluded"
+    assert "keeps pinned" in text and "drops leaked" in text
+    assert "0.45" in text

@@ -714,6 +714,47 @@ def apply_decision(path: Path, key: str, action: str) -> dict[str, str]:
     return decisions
 
 
+def evaluate(rows: list[dict], edges=BANDS) -> list[dict]:
+    """Per-threshold view of the hand decisions: would the score agree with you?
+
+    ``keeps_matched`` counts photos you marked ``keep`` that the score would have
+    found on its own; the rest need the pin. ``drops_matched`` counts false
+    positives the score would have admitted — those need the pin to stay out.
+    Reviews are the ground truth, so unreviewed photos are simply not counted.
+    """
+    keeps = [r for r in rows if r.get("override") == "keep"]
+    drops = [r for r in rows if r.get("override") == "drop"]
+    return [
+        {
+            "threshold": t,
+            "keeps": len(keeps),
+            "keeps_matched": sum(1 for r in keeps if r["score"] >= t),
+            "drops": len(drops),
+            "drops_matched": sum(1 for r in drops if r["score"] >= t),
+        }
+        for t in edges
+    ]
+
+
+def evaluate_report(rows: list[dict], edges=BANDS) -> str:
+    """Text table over ``evaluate`` results, plus what is still unreviewed."""
+    table = evaluate(rows, edges)
+    reviewed = sum(1 for r in rows if r.get("override"))
+    lines = [
+        f"{reviewed} reviewed of {len(rows)} photos "
+        f"({sum(1 for r in rows if r.get('override') == 'keep')} keep, "
+        f"{sum(1 for r in rows if r.get('override') == 'drop')} drop)",
+        "",
+        f"  {'threshold':>9} {'keeps found':>12} {'keeps pinned':>13} {'drops rejected':>15} {'drops leaked':>13}",
+    ]
+    for row in table:
+        lines.append(
+            f"  {row['threshold']:9.2f} {row['keeps_matched']:12d} {row['keeps'] - row['keeps_matched']:13d} "
+            f"{row['drops'] - row['drops_matched']:15d} {row['drops_matched']:13d}"
+        )
+    return "\n".join(lines)
+
+
 def unused_overrides(overrides: dict[str, str], rows: list[dict]) -> list[str]:
     """Decision keys that match no photo on disk (renamed album, typo)."""
     seen = {r["rel"] for r in rows}

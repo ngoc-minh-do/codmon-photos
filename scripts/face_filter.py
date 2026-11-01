@@ -27,6 +27,18 @@ import smb_sync
 from dotenv import load_dotenv
 
 
+def collect_rows(args):
+    """Rows for ``person`` with hand decisions applied; shared by report/export/evaluate."""
+    db = faces.open_db(args.db)
+    overrides_file = faces.overrides_path(args.refs, args.person)
+    overrides = faces.load_overrides(overrides_file)
+    rows = faces.collect(db, args.person, args.photos, args.min_face, faces.pipeline_for(db, args.detector), overrides)
+    unused = faces.unused_overrides(overrides, rows)
+    if unused:
+        print(f"{len(unused)} override entr(ies) in {overrides_file} match no photo: {', '.join(unused[:3])}")
+    return rows
+
+
 def enrolled_pipelines(db, person: str, detector: str) -> list[str]:
     """Cached pipelines this person is already enrolled for on ``detector``."""
     rows = db.execute("SELECT DISTINCT pipeline FROM refs WHERE person = ?", (person,))
@@ -96,6 +108,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--link", action="store_true", help="hardlink instead of copy")
     p.add_argument("--prune", action="store_true", help="delete earlier copies that no longer match")
     p.add_argument("--yes", action="store_true", help="actually write files (default: dry run)")
+
+    p = sub.add_parser(
+        "evaluate",
+        parents=[common],
+        help="show how each threshold matches the keep/drop decisions you made",
+    )
+    p.add_argument("person")
 
     p = sub.add_parser(
         "compare",
@@ -178,6 +197,10 @@ def main(argv: list[str] | None = None) -> int:
             )
         return 0
 
+    if args.cmd == "evaluate":
+        print(faces.evaluate_report(collect_rows(args)))
+        return 0
+
     if args.cmd == "compare":
         chosen = args.detectors or [faces.detector_of(p) for p in faces.pipelines(db)]
         pair = [p for p in faces.pipelines(db) if faces.detector_of(p) in chosen]
@@ -196,12 +219,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {sheet}")
         return 0
 
-    overrides_file = faces.overrides_path(args.refs, args.person)
-    overrides = faces.load_overrides(overrides_file)
-    rows = faces.collect(db, args.person, args.photos, args.min_face, faces.pipeline_for(db, args.detector), overrides)
-    unused = faces.unused_overrides(overrides, rows)
-    if unused:
-        print(f"{len(unused)} override entr(ies) in {overrides_file} match no photo: {', '.join(unused[:3])}")
+    rows = collect_rows(args)
+
     if args.cmd == "report":
         out = args.out or args.db.parent / f"report-{args.person}-{args.detector}.html"
         print("threshold  photos kept  share")
@@ -211,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         unknown = sum(1 for row in rows if not row["faces"])
         if unknown:
             print(f"{unknown} photo(s) have no face wider than {args.min_face:.0f}px and are never counted as hers")
-        sheet = faces.write_report(db, args.person, rows, out, args.threshold, args.min_face)
+        sheet = faces.write_report(faces.open_db(args.db), args.person, rows, out, args.threshold, args.min_face)
         print(f"wrote {sheet}")
         return 0
 

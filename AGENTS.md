@@ -109,6 +109,10 @@ Rules:
   album folders already on the share are left alone.
 - `APPRISE_URL` notifies after an **upload** that moved photos; downloads are
   silent.
+- `evaluate <person>` prints, per candidate threshold, how many of your `keep`
+  decisions the score would have found and how many `drop` decisions it would
+  have admitted — the check to run after a review session, before moving the
+  default. Unreviewed photos are not part of that ground truth.
 - Hand decisions live in `refs/<name>/overrides.json` (`album/file.JPG` ->
   `keep`/`drop`, written by `review_server.py` or by hand). They win over the
   score in both directions: `keep` exports a photo that scored low or had no

@@ -98,6 +98,12 @@ model or the threshold — run the local review server and click:
 uv run scripts/review_server.py <name> --threshold 0.55   # http://127.0.0.1:8765
 ```
 
+After clicking through, check the threshold against your own decisions:
+
+```bash
+uv run scripts/face_filter.py evaluate <name>
+```
+
 `keep` exports a photo the score missed (even with no detected face), `drop`
 removes a false positive. Decisions are stored in `refs/<name>/overrides.json`
 keyed by `album/file.JPG`, and `export` / `prune` respect them.
