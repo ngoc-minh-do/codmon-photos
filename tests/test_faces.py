@@ -401,8 +401,8 @@ def test_enroll_prefers_the_face_matching_the_gallery_over_the_largest(tmp_path,
     assert any("matching the gallery" in w for w in warnings)
 
 
-def test_enroll_bootstraps_from_the_largest_face_then_flags_disagreement(tmp_path, monkeypatch):
-    """With no single-face photo, the largest seeds the gallery; a total mismatch is skipped."""
+def test_enroll_refuses_to_guess_without_a_single_face_photo(tmp_path, monkeypatch):
+    """A gallery of only group photos has no seed: nothing is enrolled, nothing guessed."""
     import cv2
 
     refs = tmp_path / "refs" / "kid" / "face"
@@ -410,28 +410,29 @@ def test_enroll_bootstraps_from_the_largest_face_then_flags_disagreement(tmp_pat
     for name in ("a.jpg", "b.jpg"):
         cv2.imwrite(str(refs / name), np.zeros((32, 32, 3), dtype=np.uint8))
 
-    faces_for_calls = iter(
-        [
-            [((0, 0, 60, 60), np.array([[9.0, 9.0]] * 5), 0.8), ((0, 0, 20, 20), np.array([[1.0, 1.0]] * 5), 0.7)],
-            [((0, 0, 30, 30), np.array([[2.0, 2.0]] * 5), 0.9), ((0, 0, 25, 25), np.array([[3.0, 3.0]] * 5), 0.9)],
-        ]
+    monkeypatch.setattr(
+        faces,
+        "detect",
+        lambda img, det, min_width=20: [
+            ((0, 0, 60, 60), np.array([[9.0, 9.0]] * 5), 0.8),
+            ((0, 0, 20, 20), np.array([[1.0, 1.0]] * 5), 0.7),
+        ],
     )
-    monkeypatch.setattr(faces, "detect", lambda img, det, min_width=20: next(faces_for_calls))
-
-    def embed_by_identity(img, kps, rec):
-        # face x=9 is the bootstrap kid, x=2/3 belong to someone else (orthogonal)
-        return np.array([0.0, 1.0, 0.0] if kps[0][0] == 9.0 else [1.0, 0.0, 0.0], np.float32)
-
-    monkeypatch.setattr(faces, "embed", embed_by_identity)
+    monkeypatch.setattr(faces, "embed", lambda img, kps, rec: np.array([1.0, 0.0, 0.0], np.float32))
     monkeypatch.setattr(faces, "align", lambda img, kps, size=112: np.zeros((size, size, 3), np.uint8))
     db = faces.open_db(tmp_path / "faces.db")
     det = types.SimpleNamespace(name="yunet", score=0.6, faces=lambda img: [])
 
-    warnings = faces.enroll(db, "kid", refs, det, None, tmp_path / ".cache")
+    with pytest.raises(SystemExit, match="only her face"):
+        faces.enroll(db, "kid", refs, det, None, tmp_path / ".cache")
 
-    assert any("no gallery yet" in w for w in warnings)
-    assert any("no face there resembles the others" in w for w in warnings)
-    assert db.execute("SELECT COUNT(*) FROM refs").fetchone() == (1,)
+    assert db.execute("SELECT COUNT(*) FROM refs").fetchone() == (0,)
+
+
+def test_pick_reference_needs_a_seeded_gallery():
+    with pytest.raises(ValueError, match="seeded gallery"):
+        two_faces = [((0, 0, 60, 60), np.zeros((5, 2)), 0.9), ((0, 0, 20, 20), np.zeros((5, 2)), 0.8)]
+        faces._pick_reference(two_faces, [], None, None)
 
 
 def test_re_enroll_leaves_no_stale_crop_files(tmp_path, monkeypatch):
@@ -450,3 +451,31 @@ def test_re_enroll_leaves_no_stale_crop_files(tmp_path, monkeypatch):
 
     assert len(second) == 1, f"stale crops survived: {second}"
     assert second == ["00_single.jpg"]
+
+
+def test_failed_re_enroll_keeps_the_previous_gallery(tmp_path, monkeypatch):
+    """A run that enrols nothing must not leave the person with an empty gallery."""
+    refs = _enroll_fixture(tmp_path, monkeypatch)
+    db = faces.open_db(tmp_path / "faces.db")
+    det = types.SimpleNamespace(name="yunet", score=0.6, faces=lambda img: [])
+    crop_root = tmp_path / ".cache"
+    faces.enroll(db, "kid", refs, det, None, crop_root)
+    before = db.execute("SELECT COUNT(*) FROM refs").fetchone()[0]
+    crops_before = sorted(p.name for p in (crop_root / "kid" / "yunet").iterdir())
+    assert before == 2
+
+    # now every remaining reference has two faces: nothing can be enrolled
+    (refs / "single.jpg").unlink()
+    monkeypatch.setattr(
+        faces,
+        "detect",
+        lambda img, det, min_width=20: [
+            ((0, 0, 60, 60), np.array([[9.0, 9.0]] * 5), 0.8),
+            ((0, 0, 20, 20), np.array([[1.0, 1.0]] * 5), 0.7),
+        ],
+    )
+    with pytest.raises(SystemExit, match="only her face"):
+        faces.enroll(db, "kid", refs, det, None, crop_root)
+
+    assert db.execute("SELECT COUNT(*) FROM refs").fetchone()[0] == before
+    assert sorted(p.name for p in (crop_root / "kid" / "yunet").iterdir()) == crops_before

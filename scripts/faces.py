@@ -492,11 +492,11 @@ def album_dirs(root: Path) -> list[Path]:
 def enroll(db: sqlite3.Connection, person: str, ref_dir: Path, det, rec, crop_dir: Path) -> list[str]:
     """Embed the photos in ``ref_dir`` as references for ``person``.
 
-    Single-face photos are enrolled first and unambiguously. A photo with several
-    faces then contributes the candidate that best matches what is already
-    enrolled — picking "the largest face" instead grabs whichever classmate is
-    closest to the camera, which is a wrong reference the scoring then has to
-    live with. Returns human-readable warnings.
+    The gallery is seeded by photos that contain exactly one face; a photo with
+    several faces then contributes the candidate that best matches what is
+    already enrolled. Nothing is guessed: a multi-face photo is skipped until an
+    unambiguous one has been enrolled, and it is skipped again when no candidate
+    resembles the gallery. Returns human-readable warnings.
     """
     import cv2
 
@@ -505,10 +505,6 @@ def enroll(db: sqlite3.Connection, person: str, ref_dir: Path, det, rec, crop_di
         raise SystemExit(f"no reference photos in {ref_dir}/ — add 4-6 face photos of {person!r}")
     pipeline = pipeline_id(det)
     crops = crop_dir / person / det.name
-    if crops.is_dir():
-        shutil.rmtree(crops)  # derived crops: rebuilt from scratch so no stale index files remain
-    crops.mkdir(parents=True, exist_ok=True)
-    db.execute("DELETE FROM refs WHERE person = ? AND pipeline = ?", (person, pipeline))
     warnings = []
 
     scanned = []
@@ -527,33 +523,44 @@ def enroll(db: sqlite3.Connection, person: str, ref_dir: Path, det, rec, crop_di
     # unambiguous photos first: they seed the gallery the ambiguous ones match against
     scanned.sort(key=lambda item: len(item[2]))
 
-    embs, sources = [], []
+    pending = []  # (source, crop, embedding) — written only once enrollment succeeds
+    embs = []
     for path, img, faces in scanned:
+        if len(faces) > 1 and not embs:
+            warnings.append(f"{path.name}: {len(faces)} faces and no single-face photo yet — skipped")
+            continue
         chosen, confidence = _pick_reference(faces, embs, img, rec)
         box, kps = chosen[0], chosen[1]
         if box[2] < 64:
             warnings.append(f"{path.name}: face only {box[2]:.0f}px wide — a bigger photo would help")
-        if len(faces) > 1:
-            if confidence is None:
-                warnings.append(f"{path.name}: {len(faces)} faces, no gallery yet — kept the largest ({box[2]:.0f}px)")
-            else:
-                warnings.append(
-                    f"{path.name}: {len(faces)} faces, kept the one matching the gallery ({confidence:.2f}, {box[2]:.0f}px)"
-                )
-                if confidence < 0.35:
-                    warnings.append(f"{path.name}: no face there resembles the others ({confidence:.2f}) — skipped")
-                    continue
-        crop_path = crops / f"{len(embs):02d}_{path.stem}.jpg"
-        cv2.imwrite(str(crop_path), align(img, kps))
-        embs.append(embed(img, kps, rec))
-        sources.append((str(path), str(crop_path)))
-    if not embs:
-        raise SystemExit(f"could not enroll anything from {ref_dir}/")
-    for (source, crop), emb in zip(sources, embs, strict=True):
+        if confidence is not None:
+            warnings.append(
+                f"{path.name}: {len(faces)} faces, kept the one matching the gallery ({confidence:.2f}, {box[2]:.0f}px)"
+            )
+            if confidence < 0.35:
+                warnings.append(f"{path.name}: no face there resembles the others ({confidence:.2f}) — skipped")
+                continue
+        crop = align(img, kps)
+        emb = embed(img, kps, rec)
+        pending.append((str(path), crop, emb))
+        embs.append(emb)
+    if not pending:
+        raise SystemExit(f"could not enroll anything from {ref_dir}/ — add at least one photo with only her face in it")
+
+    # nothing above touched the existing gallery: only now is it replaced
+    if crops.is_dir():
+        shutil.rmtree(crops)  # derived crops: rebuilt so no stale index files remain
+    crops.mkdir(parents=True, exist_ok=True)
+    db.execute("DELETE FROM refs WHERE person = ? AND pipeline = ?", (person, pipeline))
+    sources = []
+    for index, (source, crop, emb) in enumerate(pending):
+        crop_path = crops / f"{index:02d}_{Path(source).stem}.jpg"
+        cv2.imwrite(str(crop_path), crop)
         db.execute(
             "INSERT INTO refs (person, pipeline, source, crop, emb) VALUES (?,?,?,?,?)",
-            (person, pipeline, source, crop, emb.tobytes()),
+            (person, pipeline, source, str(crop_path), emb.tobytes()),
         )
+        sources.append((source, str(crop_path)))
     db.commit()
     if len(embs) > 1:
         stack = np.stack(embs)
@@ -566,16 +573,16 @@ def enroll(db: sqlite3.Connection, person: str, ref_dir: Path, det, rec, crop_di
 
 
 def _pick_reference(faces, embs: list[np.ndarray], img, rec):
-    """Which face of a reference photo to enrol, and how sure we are.
+    """Which face of a reference photo to enrol, and how well it matches.
 
-    One face is unambiguous; several are scored against the references gathered
-    so far (``None`` confidence while the gallery is still empty, where the
-    largest face is the only signal available).
+    A single face is unambiguous (``confidence`` is ``None``); several faces are
+    scored against the references gathered so far, and the caller needs a
+    non-empty gallery — it never guesses from face size.
     """
     if len(faces) == 1:
         return faces[0], None
     if not embs:
-        return max(faces, key=lambda f: f[0][2]), None
+        raise ValueError("_pick_reference needs a seeded gallery to choose between faces")
     gallery = np.stack(embs)
     scores = [float((gallery @ embed(img, kps, rec)).max()) for _box, kps, _score in faces]
     best = int(np.argmax(scores))
