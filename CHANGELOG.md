@@ -48,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forms, absence notices) and tolerates a 404 from the albums endpoint, so one
   unrelated item can no longer abort a whole run.
 
+### Changed
+
+- `--min-face` now defaults to 20px, the storage floor, so every face the cache
+  keeps is judged. The old 40px gate was never measured and hid 93 of 670 photos
+  from the score — including 17 of the 38 keeps, which is why they could only be
+  recovered by hand. Re-scoring the reviewed corpus at 20px judges 36/38 keeps
+  with all 15 drops still below the 0.55 cutoff, and leaves the export at 82.
+
 ### Removed
 
 - `face_filter.py report`: the threshold sweep is printed by `evaluate`, which

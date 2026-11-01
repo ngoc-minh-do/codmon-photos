@@ -93,8 +93,9 @@ Rules:
 - Cache rows are keyed by file sha1, not path, so the same photo is embedded once
   wherever it appears (album, staging dir, re-download). Every face down to 20px
   is cached, so `--threshold` and `--min-face` are pure re-scoring: never re-run
-  `scan` to try a different cutoff. Default `--min-face` is 40px — narrower faces
-  are reported as "unusable", not as "not her".
+  `scan` to try a different cutoff. Default `--min-face` is 20px, the storage
+  floor, so every stored face is judged; narrower ones are reported as
+  "unusable", not as "not her".
 - Score sweep (median face is ~31px, max ~1110x500 per album): expect the cutoff
   to sit around 0.40-0.55. Close-ups match strongly (>0.6); wide group shots are
   the failure mode.

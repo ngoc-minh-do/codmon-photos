@@ -43,8 +43,9 @@ DEFAULT_MODELS = Path(".cache/models")
 DEFAULT_PHOTOS = Path("downloads")
 DEFAULT_MATCHED = Path("matched")
 DEFAULT_REFS = Path("refs")
-DEFAULT_MIN_FACE = 40  # narrower faces are detected but not judged
-DEFAULT_FLOOR = 20  # faces narrower than this are never stored
+DEFAULT_FLOOR = 20  # faces narrower than this are never stored at all
+DEFAULT_MIN_FACE = 20  # judge every stored face: on 500px sources a 40px gate hid 93/670 photos
+
 DEFAULT_THRESHOLD = 0.55  # measured: below this, other children score as matches
 BANDS = (0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65)  # compact table in the review sheet
 # evaluate walks a 0.20..0.95 ladder: seeing where the two populations meet, not

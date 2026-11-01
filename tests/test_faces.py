@@ -169,6 +169,21 @@ def test_collect_scores_albums_from_the_cache(tmp_path):
     assert by_name["other.jpg"]["faces"] == 0, "a 30px face is below --min-face 40"
 
 
+def test_default_min_face_judges_every_stored_face(tmp_path):
+    assert faces.DEFAULT_MIN_FACE == faces.DEFAULT_FLOOR == 20, "the gate must not hide what the cache stores"
+
+    (tmp_path / "downloads" / "2026-09-25").mkdir(parents=True)
+    other = tmp_path / "downloads" / "2026-09-25" / "small.jpg"
+    other.write_bytes(b"\xff\xd8y")
+    db = faces.open_db(tmp_path / "faces.db")
+    add_ref(db)
+    faces.store_photo(db, faces.file_sha1(other), (750, 500), PIPE, [((0, 0, 30, 30), 0.9, unit(0, 1, 0))])
+
+    rows = faces.collect(db, "kid", [tmp_path / "downloads"], pipeline=PIPE)
+
+    assert rows[0]["faces"] == 1, "a 30px face is judged by default"
+
+
 def test_gallery_requires_references(tmp_path):
     db = faces.open_db(tmp_path / "faces.db")
     with pytest.raises(SystemExit, match="enroll"):
