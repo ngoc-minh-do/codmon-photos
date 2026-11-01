@@ -25,13 +25,6 @@ def add_ref(db, person="kid", emb=None, pipeline=PIPE):
     )
 
 
-def test_band_of_boundaries():
-    assert faces.band_of(0.10) == "<0.35"
-    assert faces.band_of(0.35) == "0.35-0.40"
-    assert faces.band_of(0.449) == "0.40-0.45"
-    assert faces.band_of(0.70) == ">=0.65"
-
-
 def test_sweep_counts_and_shares():
     rows = [
         {"score": 0.62, "faces": 2},
@@ -553,6 +546,17 @@ def test_report_links_photos_and_badges_every_state(tmp_path):
     assert 'class="box" style="left:13.33%;top:10.00%;width:8.00%;height:16.00%"' in html_text
     assert out.stat().st_size < 20_000, "sheet stays small"
 
+    # the verdict is carried by the card border, not only by the badge text
+    assert 'class="card matched"' in html_text
+    assert 'class="card below"' in html_text
+    assert 'class="card unknown"' in html_text
+    assert ".card.matched{border-left-color:#5ec26a}" in html_text
+    assert "font:700 13px" in html_text, "badge is 13px bold"
+    # the band label is gone; the path is a tooltip, not a visible line
+    assert "0.40-0.45" not in html_text and "0.60-0.65" not in html_text
+    assert 'class="path"' not in html_text
+    assert 'title="album/p0.jpg"' in html_text
+
 
 def test_report_only_filters_to_one_verdict(tmp_path):
     db = faces.open_db(tmp_path / "faces.db")
@@ -562,8 +566,8 @@ def test_report_only_filters_to_one_verdict(tmp_path):
 
     faces.write_report(db, "kid", rows, out, 0.45, 40, only="matched")
     html_text = out.read_text()
-    assert html_text.count('class="card"') == 2, "one reference card + the single match"
-    assert html_text.count('class="card"') == 2 and "p1.jpg" not in html_text and "p2.jpg" not in html_text
+    assert html_text.count('class="card') == 2, "one reference card + the single match"
+    assert "p1.jpg" not in html_text and "p2.jpg" not in html_text
     assert ">below<" not in html_text and ">no face<" not in html_text
     assert "showing matched only" in html_text
 
@@ -688,3 +692,44 @@ def test_ensure_model_extracts_buffalo_members_into_the_cache_only(tmp_path, mon
     assert got.read_bytes() == payload
     assert not (models_dir / "buffalo_l.zip").exists(), "the archive is cleaned up"
     assert not (tmp_path / "nohome").exists(), "no external model directory is touched"
+
+
+def test_report_collapses_albums_and_counts_them(tmp_path):
+    db = faces.open_db(tmp_path / "faces.db")
+    add_ref(db)
+    rows = _report_rows(tmp_path)  # one matched (0.6), one below (0.4), one unusable
+    out = tmp_path / ".cache" / "album.html"
+
+    faces.write_report(db, "kid", rows, out, 0.45, 40)
+    html_text = out.read_text()
+
+    assert html_text.count("<details class='album'") == 1
+    assert "<details class='album' open>" in html_text, "an album with a match starts open"
+    assert "3 photos · 1 matched · 1 below (1 within 0.10) · 1 unusable" in html_text
+    assert "@media print{details{display:block}" in html_text, "collapsed albums still print"
+
+
+def test_report_omits_albums_with_nothing_to_show(tmp_path):
+    db = faces.open_db(tmp_path / "faces.db")
+    add_ref(db)
+    rows = _report_rows(tmp_path)
+    out = tmp_path / ".cache" / "only.html"
+
+    faces.write_report(db, "kid", rows, out, 0.45, 40, only="matched")
+    html_text = out.read_text()
+
+    assert html_text.count("<details class='album'") == 1
+    assert "0 matched" not in html_text, "no empty album sections"
+
+
+def test_report_album_without_matches_starts_collapsed(tmp_path):
+    db = faces.open_db(tmp_path / "faces.db")
+    add_ref(db)
+    rows = _report_rows(tmp_path)
+    out = tmp_path / ".cache" / "closed.html"
+
+    faces.write_report(db, "kid", rows, out, 0.95, 40)  # nothing reaches 0.95
+    html_text = out.read_text()
+
+    assert "<details class='album' open>" not in html_text
+    assert "<details class='album'>" in html_text

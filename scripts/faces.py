@@ -659,16 +659,6 @@ def collect(
 # --- decisions --------------------------------------------------------------
 
 
-def band_of(score: float, edges=BANDS) -> str:
-    """Which candidate-threshold interval the score falls into."""
-    if score < edges[0]:
-        return f"<{edges[0]:.2f}"
-    for low, high in zip(edges, edges[1:], strict=False):
-        if score < high:
-            return f"{low:.2f}-{high:.2f}"
-    return f">={edges[-1]:.2f}"
-
-
 def sweep(rows: list[dict], edges=BANDS) -> list[tuple[float, int, float]]:
     """(threshold, photos kept, share of all photos kept) per candidate threshold."""
     total = len(rows) or 1
@@ -1007,18 +997,26 @@ REPORT_CSS = """
 body{font:14px/1.45 system-ui,sans-serif;background:#111;color:#ddd;margin:24px}
 h1{font-size:18px} h2{font-size:15px;margin-top:26px;border-bottom:1px solid #333;padding-bottom:4px}
 table{border-collapse:collapse;margin:6px 0} td,th{padding:2px 10px;border-bottom:1px solid #262626;text-align:left}
-.card{display:inline-block;vertical-align:top;width:440px;margin:6px;background:#1a1a1a;border-radius:6px;padding:8px}
+.card{display:inline-block;vertical-align:top;width:440px;margin:6px;background:#1a1a1a;border-radius:6px;
+      padding:8px;border-left:5px solid #333}
+.card.matched{border-left-color:#5ec26a} .card.unknown{border-left-color:#f0a020}
+.card.ref{width:140px;border-left-color:#444}
 .frame{position:relative;display:block}
-.frame img{width:100%;border-radius:4px;display:block}
+.frame img{width:100%;border-radius:4px;display:block;background:#000}
 .box{position:absolute;border:2px solid #5ec26a;border-radius:1px;box-shadow:0 0 0 1px #0006}
 .row{display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap}
-.badge{font:600 11px ui-monospace,monospace;padding:2px 6px;border-radius:3px;background:#2a2a2a;color:#bbb}
+.badge{font:700 13px ui-monospace,monospace;padding:2px 7px;border-radius:3px;background:#2a2a2a;color:#bbb}
 .badge.ok{background:#1f3d24;color:#7ddc89} .badge.warn{background:#3d3018;color:#f0a020}
-.score{font-weight:700;font-variant-numeric:tabular-nums} .muted{color:#777}
-.path{font:11px ui-monospace,monospace;color:#888;word-break:break-all}
+.score{font-weight:600;font-size:14px;font-variant-numeric:tabular-nums} .muted{color:#777}
+details.album{margin:10px 0}
+details.album>summary{cursor:pointer;position:sticky;top:0;z-index:2;background:#111;color:#ddd;
+                      font-size:15px;font-weight:600;padding:8px 0;border-bottom:1px solid #333}
+details.album>summary .muted{font-weight:400;font-size:13px}
+@media print{details{display:block} details>summary{position:static}}
 """
 
 BADGES = {"matched": ("ok", "MATCH"), "below": ("", "below"), "unknown": ("warn", "no face")}
+NEAR_MISS = 0.10  # "below but close": within this much under the threshold
 
 
 def verdict(row: dict, threshold: float) -> str:
@@ -1061,12 +1059,12 @@ def write_report(
     min_face: float,
     only: str = "all",
 ) -> Path:
-    """Self-contained-by-reference HTML sheet: photos are linked, not embedded.
+    """HTML sheet with one collapsible section per album.
 
-    Each card carries a text badge (``MATCH`` / ``below`` / ``no face``) plus the
-    score, the band and a box drawn over the photo where the best face was. Since
-    the album JPEGs are referenced relatively, the sheet is a few hundred KB and
-    re-running at another threshold never re-encodes an image.
+    The verdict is carried by the card's left border (green matched, orange no
+    face, grey below) so a fast scroll reads as a colour pattern; the badge spells
+    it out for screenshots and colour-blind viewers. Photos are linked relatively
+    (nothing embedded), so re-running at another threshold is instant.
     """
     out.parent.mkdir(parents=True, exist_ok=True)
     shown = [r for r in rows if only == "all" or verdict(r, threshold) == only]
@@ -1080,9 +1078,8 @@ def write_report(
     pipeline = rows[0]["pipeline"] if rows else ""
     for source, crop in db.execute(query, (person, pipeline)):
         parts.append(
-            f'<span class="card" style="width:140px"><img loading="lazy" '
-            f'src="{image_src(Path(crop), out)}">'
-            f'<div class="path">{Path(source).name}</div></span>'
+            f'<span class="card ref"><img loading="lazy" src="{image_src(Path(crop), out)}" '
+            f'title="{html.escape(Path(source).name, quote=True)}"></span>'
         )
     parts.append("</div>")
 
@@ -1097,23 +1094,33 @@ def write_report(
 
     for album in sorted({r["album"] for r in shown}):
         group = [r for r in shown if r["album"] == album]
-        hits = sum(1 for r in group if verdict(r, threshold) == "matched")
-        parts.append(f"<h2>{album} — {len(group)} photos, {hits} at {threshold:.2f}</h2>")
+        states = [verdict(r, threshold) for r in group]
+        matched = states.count("matched")
+        unusable = states.count("unknown")
+        below = states.count("below")
+        near = sum(
+            1 for r, s in zip(group, states, strict=True) if s == "below" and r["score"] >= threshold - NEAR_MISS
+        )
+        summary = (
+            f"{album} <span class='muted'>— {len(group)} photos · {matched} matched · "
+            f"{below} below ({near} within {NEAR_MISS:.2f}) · {unusable} unusable</span>"
+        )
+        parts.append(f"<details class='album'{' open' if matched else ''}><summary>{summary}</summary>")
         for r in sorted(group, key=lambda r: -r["score"]):
             state = verdict(r, threshold)
             cls, label = BADGES[state]
             box = face_box_style(r["best_box"], r.get("width", 0), r.get("height", 0))
+            rel = r["path"].relative_to(r["root"])
             parts.append(
-                f'<div class="card"><span class="frame">'
+                f'<div class="card {state}"><span class="frame" title="{html.escape(str(rel), quote=True)}">'
                 f'<img loading="lazy" src="{image_src(r["path"], out)}">'
                 f"{f'<span class="box" style="{box}"></span>' if box else ''}</span>"
                 f'<div class="row"><span class="badge {cls}">{label}</span>'
                 f'<span class="score">{r["score"]:.3f}</span>'
-                f'<span class="muted">{band_of(r["score"])}</span>'
-                f'<span class="muted">{r["faces"]} face(s) ≥ {min_face:.0f}px</span></div>'
-                f'<div class="path">{r["path"].relative_to(r["root"])}</div></div>'
+                f'<span class="muted">{r["faces"]} face(s) ≥ {min_face:.0f}px</span></div></div>'
             )
+        parts.append("</details>")
 
-    html = f"<!doctype html><meta charset=utf-8><title>face review — {person}</title><style>{REPORT_CSS}</style>\n"
-    out.write_text(html + "\n".join(parts), encoding="utf-8")
+    sheet = f"<!doctype html><meta charset=utf-8><title>face review — {person}</title><style>{REPORT_CSS}</style>\n"
+    out.write_text(sheet + "\n".join(parts), encoding="utf-8")
     return out
