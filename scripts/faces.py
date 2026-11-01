@@ -1145,10 +1145,12 @@ def write_report(
     threshold: float,
     min_face: float,
     interactive: bool = False,
+    src_for=None,
 ) -> Path:
     """Write ``render_report`` output to ``out``."""
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render_report(db, person, rows, out, threshold, min_face, interactive), encoding="utf-8")
+    body = render_report(db, person, rows, out, threshold, min_face, interactive, src_for=src_for)
+    out.write_text(body, encoding="utf-8")
     return out
 
 
@@ -1161,6 +1163,7 @@ def render_report(
     min_face: float,
     interactive: bool = False,
     subtitle: str = "",
+    src_for=None,
 ) -> str:
     """HTML sheet with one collapsible section per album.
 
@@ -1174,12 +1177,15 @@ def render_report(
         heading += f" <span class='muted' style='font-size:13px;font-weight:400'>{html.escape(subtitle)}</span>"
     parts = [f"<h1>{heading}</h1>"]
 
+    def src(path: Path) -> str:
+        return src_for(path) if src_for else image_src(path, out)
+
     parts.append("<h2>Enrolled references (verify these are all her)</h2><div>")
     query = "SELECT source, crop FROM refs WHERE person = ? AND pipeline = ? ORDER BY source"
     pipeline = rows[0]["pipeline"] if rows else ""
     for source, crop in db.execute(query, (person, pipeline)):
         parts.append(
-            f'<span class="card ref"><img loading="lazy" src="{image_src(Path(crop), out)}" '
+            f'<span class="card ref"><img loading="lazy" src="{src(Path(crop))}" '
             f'title="{html.escape(Path(source).name, quote=True)}"></span>'
         )
     parts.append("</div>")
@@ -1221,7 +1227,7 @@ def render_report(
             parts.append(
                 f'<div class="card {state}" data-state="{state}">'
                 f'<span class="frame" title="{html.escape(rel, quote=True)}">'
-                f'<img loading="lazy" src="{image_src(r["path"], out)}">'
+                f'<img loading="lazy" src="{src(r["path"])}">'
                 f"{f'<span class="box" style="{box}"></span>' if box else ''}</span>"
                 f'<div class="row"><span class="badge {cls}">{label}</span>'
                 f'<span class="score">{r["score"]:.3f}</span>'

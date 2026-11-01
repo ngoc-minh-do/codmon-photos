@@ -794,3 +794,25 @@ def test_report_can_render_action_buttons(tmp_path):
     assert html_text.count('class="actions"') == 3, "one action row per photo card"
     assert 'fetch("/decide"' in html_text
     assert "album/p0.jpg" in html_text, "the button payload is the readable key"
+
+
+def test_render_report_can_serve_images_from_the_server(tmp_path):
+    """The review server passes src_for, so the page never emits a filesystem path."""
+    db = faces.open_db(tmp_path / "faces.db")
+    add_ref(db)
+    out = tmp_path / ".cache" / "served.html"
+
+    faces.write_report(
+        db,
+        "kid",
+        _report_rows(tmp_path),
+        out,
+        0.45,
+        40,
+        interactive=True,
+        src_for=lambda path: "/photos/" + path.name,
+    )
+    html_text = out.read_text()
+
+    assert 'src="/photos/p0.jpg"' in html_text
+    assert "../downloads/album" not in html_text, "no relative paths when served over http"

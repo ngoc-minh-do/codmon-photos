@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -64,6 +65,40 @@ def refresh(state: dict) -> list[dict]:
     return state["rows"]
 
 
+def crops_dir(state: dict) -> Path:
+    """Where enroll() wrote the aligned reference crops for this detector."""
+    args = state["args"]
+    return Path(args.db).parent / "refs" / args.person / args.detector
+
+
+def src_for(state: dict):
+    """URL for a photo or reference crop, since the page is served over http."""
+    roots = [Path(root) for root in state["args"].photos]
+    crops = crops_dir(state)
+
+    def src(path: Path) -> str:
+        for root in roots:
+            try:
+                return "/photos/" + urllib.parse.quote(str(path.relative_to(root)), safe="/")
+            except ValueError:
+                continue
+        if Path(path).parent == crops:
+            return "/crop/" + urllib.parse.quote(Path(path).name, safe="")
+        return "/photos/" + urllib.parse.quote(Path(path).name, safe="")
+
+    return src
+
+
+def photo_file(state: dict, url_path: str) -> Path | None:
+    """Resolve ``/photos/<rel>`` against the configured roots, rejecting escapes."""
+    rel = urllib.parse.unquote(url_path)
+    for root in (Path(root) for root in state["args"].photos):
+        candidate = (root / rel).resolve()
+        if candidate.is_file() and root.resolve() in candidate.parents:
+            return candidate
+    return None
+
+
 def render(state: dict) -> str:
     args = state["args"]
     rows = refresh(state)
@@ -79,12 +114,21 @@ def render(state: dict) -> str:
         args.min_face,
         interactive=True,
         subtitle="click keep / drop",
+        src_for=src_for(state),
     )
 
 
 def make_handler(state: dict):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - stdlib naming
+            if self.path.startswith("/photos/"):
+                self.serve_photo(self.path[len("/photos/") :])
+                return
+            if self.path.startswith("/crop/"):
+                name = urllib.parse.unquote(self.path[len("/crop/") :])
+                candidate = crops_dir(state) / name
+                self.serve_file(candidate if candidate.is_file() else None)
+                return
             if self.path not in ("/", "/index.html"):
                 self.send_error(404)
                 return
@@ -94,6 +138,21 @@ def make_handler(state: dict):
             self.send_header("Content-Length", str(len(page)))
             self.end_headers()
             self.wfile.write(page)
+
+        def serve_photo(self, url_path: str) -> None:
+            self.serve_file(photo_file(state, url_path))
+
+        def serve_file(self, path: Path | None) -> None:
+            if path is None:
+                self.send_error(404)
+                return
+            data = path.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "max-age=3600")
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_POST(self) -> None:  # noqa: N802 - stdlib naming
             if self.path != "/decide":
