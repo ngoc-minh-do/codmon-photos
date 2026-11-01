@@ -717,54 +717,80 @@ def apply_decision(path: Path, key: str, action: str) -> dict[str, str]:
     return decisions
 
 
-def evaluate(rows: list[dict], edges=EVALUATE_EDGES) -> list[dict]:
-    """Per-threshold view of the hand decisions: would the score agree with you?
+def evaluate(rows: list[dict], edges=EVALUATE_EDGES, baseline: float = DEFAULT_THRESHOLD) -> list[dict]:
+    """Per-threshold view of what the score alone would do, given the decisions.
 
-    ``keeps_matched`` counts photos you marked ``keep`` that the score would have
-    found on its own; the rest need the pin. ``drops_matched`` counts false
-    positives the score would have admitted — those need the pin to stay out.
-    Reviews are the ground truth, so unreviewed photos are simply not counted.
+    Membership stays disjoint so the totals add up: ``pinned`` (your keep),
+    ``blocked`` (your drop) and ``taken`` (no decision but score >= ``baseline``)
+    partition the photos that carry information. ``taken`` is the assumption that
+    what you ship today is right, so it is stated on the command line rather than
+    hidden. A photo can be both pinned and above a cutoff; that overlap is
+    reported as ``pinned_found`` instead of being counted twice.
     """
-    keeps = [r for r in rows if r.get("override") == "keep"]
-    drops = [r for r in rows if r.get("override") == "drop"]
-    return [
-        {
-            "threshold": t,
-            "keeps": len(keeps),
-            "keeps_matched": sum(1 for r in keeps if r["score"] >= t),
-            "drops": len(drops),
-            "drops_matched": sum(1 for r in drops if r["score"] >= t),
-        }
-        for t in edges
-    ]
+    pinned = [r for r in rows if r.get("override") == "keep"]
+    blocked = [r for r in rows if r.get("override") == "drop"]
+    taken = [r for r in rows if not r.get("override") and r["faces"] and r["score"] >= baseline]
+    hers = len(pinned) + len(taken)
+    out = []
+    for t in edges:
+        found = sum(1 for r in (*pinned, *taken) if r["score"] >= t)
+        exported = sum(
+            1
+            for r in rows
+            if r.get("override") == "keep" or (r.get("override") != "drop" and r["faces"] and r["score"] >= t)
+        )
+        out.append(
+            {
+                "threshold": t,
+                "pinned": len(pinned),
+                "blocked": len(blocked),
+                "taken": len(taken),
+                "hers": hers,
+                "found": found,
+                "pinned_found": sum(1 for r in pinned if r["score"] >= t),
+                "lost": hers - found,
+                "exported": exported,
+                "blocked_out": sum(1 for r in blocked if r["score"] < t),
+                "blocked_in": sum(1 for r in blocked if r["score"] >= t),
+            }
+        )
+    return out
 
 
 EVALUATE_LEGEND = """\
-  keeps found     keep photos the score would have accepted on its own
-  keeps pinned    keep photos below the threshold - only your keep decision saves them
-  drops rejected  drop photos below the threshold - the score already excludes them
-  drops leaked    drop photos above the threshold - only your drop keeps them out"""
+  found           of the photos counted as hers, how many this cutoff finds by score
+  of which pinned ...that you had pinned anyway, so the pin was not needed here
+  lost            ...that this cutoff misses (a pin still exports them, see exported)
+  exported        what export would copy: score hits above the cutoff, plus every pin
+  blocked out     your drops that this cutoff already excludes
+  blocked in      your drops that would ship without the pin"""
 
 
-def evaluate_report(rows: list[dict], edges=EVALUATE_EDGES) -> str:
-    """Text table over ``evaluate`` results, plus what is still unreviewed."""
-    table = evaluate(rows, edges)
-    keeps = sum(1 for r in rows if r.get("override") == "keep")
-    drops = sum(1 for r in rows if r.get("override") == "drop")
+def evaluate_report(rows: list[dict], edges=EVALUATE_EDGES, baseline: float = DEFAULT_THRESHOLD) -> str:
+    """Text table over ``evaluate`` results."""
+    table = evaluate(rows, edges, baseline)
+    if not table:
+        return "no thresholds to evaluate"
+    head = table[0]
     lines = [
-        f"{keeps + drops} reviewed of {len(rows)} photos ({keeps} keep, {drops} drop)",
+        f"{head['pinned']} pinned · {head['blocked']} blocked · {head['taken']} taken on score "
+        f"(baseline {baseline:.2f})",
+        f"ground truth: {head['hers']} hers ({head['pinned']} pinned + {head['taken']} on score) · "
+        f"{head['blocked']} not hers (all blocked)",
         "",
         EVALUATE_LEGEND,
         "",
-        f"  {'threshold':>9} {'keeps found':>12} {'keeps pinned':>13} {'drops rejected':>15} {'drops leaked':>13}",
+        f"  {'threshold':>9} {'found':>6} {'of which pinned':>16} {'lost':>5} {'exported':>9} "
+        f"{'blocked out':>12} {'blocked in':>11}",
     ]
     for row in table:
+        mark = "  <- current" if abs(row["threshold"] - baseline) < 1e-9 else ""
         lines.append(
-            f"  {row['threshold']:9.2f} {row['keeps_matched']:12d} {row['keeps'] - row['keeps_matched']:13d} "
-            f"{row['drops'] - row['drops_matched']:15d} {row['drops_matched']:13d}"
+            f"  {row['threshold']:9.2f} {row['found']:6d} {row['pinned_found']:16d} {row['lost']:5d} "
+            f"{row['exported']:9d} {row['blocked_out']:12d} {row['blocked_in']:11d}{mark}"
         )
     lines.append("")
-    lines.append("  a good threshold keeps drops leaked at 0 without pinning keeps that already score above it")
+    lines.append("  raising the cutoff trades found for lost; a good one keeps blocked in at 0 without losing hers")
     return "\n".join(lines)
 
 

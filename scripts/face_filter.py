@@ -112,9 +112,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser(
         "evaluate",
         parents=[common],
-        help="show how each threshold matches the keep/drop decisions you made",
+        help="how each threshold would score against your keep/drop decisions",
     )
     p.add_argument("person")
+    p.add_argument(
+        "--baseline",
+        type=float,
+        default=faces.DEFAULT_THRESHOLD,
+        help="cutoff whose undecided matches count as hers (default: the current default threshold)",
+    )
 
     p = sub.add_parser(
         "compare",
@@ -198,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "evaluate":
-        print(faces.evaluate_report(collect_rows(args)))
+        print(faces.evaluate_report(collect_rows(args), baseline=args.baseline))
         return 0
 
     if args.cmd == "compare":

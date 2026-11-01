@@ -831,28 +831,53 @@ def _reviewed_rows():
         row("d1.jpg", 0.30, "drop"),
         row("d2.jpg", 0.60, "drop"),
         row("d3.jpg", 0.90, "drop"),
-        row("u1.jpg", 0.80, None),  # unreviewed: not counted as ground truth
+        row("u1.jpg", 0.80, None),  # undecided but above the baseline: taken on score
+        row("u2.jpg", 0.25, None),  # undecided and below the baseline: not ground truth
     ]
 
 
-def test_evaluate_counts_what_each_threshold_agrees_with():
-    table = {row["threshold"]: row for row in faces.evaluate(_reviewed_rows(), edges=(0.45, 0.55))}
+def test_evaluate_counts_found_lost_and_exported():
+    """GT = pinned + undecided matches at the baseline; blocked are the negatives."""
+    table = {row["threshold"]: row for row in faces.evaluate(_reviewed_rows(), edges=(0.45, 0.55), baseline=0.45)}
 
-    assert table[0.45]["keeps"] == 3 and table[0.45]["drops"] == 3
-    assert table[0.45]["keeps_matched"] == 1, "only k3 clears 0.45 without a pin"
-    assert table[0.45]["drops_matched"] == 2, "d2 and d3 would leak in at 0.45"
-    assert table[0.55]["keeps_matched"] == 1
-    assert table[0.55]["drops_matched"] == 2
+    at45 = table[0.45]
+    assert (at45["pinned"], at45["blocked"], at45["taken"]) == (3, 3, 1), "u1 counts as taken at baseline 0.45"
+    assert at45["hers"] == 4
+    assert at45["found"] == 2, "k3 (0.70) and u1 (0.80) are found by score at 0.45"
+    assert at45["lost"] == 2
+    assert at45["pinned_found"] == 1, "k3 is pinned and above the cutoff: the pin is redundant there"
+    assert at45["blocked_out"] == 1 and at45["blocked_in"] == 2
+    for row in table.values():
+        assert row["found"] + row["lost"] == row["hers"]
+        assert row["blocked_out"] + row["blocked_in"] == row["blocked"]
+        assert row["exported"] >= row["found"]
 
 
-def test_evaluate_report_states_reviewed_and_pinned_counts():
-    text = faces.evaluate_report(_reviewed_rows(), edges=(0.45,))
-    assert "6 reviewed of 7 photos (3 keep, 3 drop)" in text, "unreviewed rows are excluded"
-    assert "keeps found" in text and "drops leaked" in text
-    assert "only your keep decision saves them" in text
-    assert "only your drop keeps them out" in text
-    assert "keeps found + keeps pinned" not in text, "the legend explains, it does not restate the formula twice"
-    assert "0.45" in text
+def test_evaluate_exported_counts_everything_that_ships():
+    rows = _reviewed_rows()
+    at_low = faces.evaluate(rows, edges=(0.20,), baseline=0.45)[0]
+    at_base = faces.evaluate(rows, edges=(0.45,), baseline=0.45)[0]
+
+    # at 0.20 the un-decided u2 (0.25) ships too, even though it is not ground truth
+    assert at_low["exported"] == 5
+    assert at_base["exported"] == 4, "at the baseline: k1+k2 pinned, k3+u1 found, drops and u2 excluded"
+
+
+def test_evaluate_baseline_moves_the_positive_set():
+    rows = _reviewed_rows()
+    strict = faces.evaluate(rows, edges=(0.55,), baseline=0.90)[0]
+    loose = faces.evaluate(rows, edges=(0.55,), baseline=0.20)[0]
+    assert strict["taken"] == 0, "nothing undecided clears 0.90"
+    assert loose["taken"] == 2, "at 0.20 both undecided photos count"
+
+
+def test_evaluate_report_states_the_baseline_and_legend():
+    text = faces.evaluate_report(_reviewed_rows(), edges=(0.45,), baseline=0.45)
+    assert "3 pinned · 3 blocked · 1 taken on score (baseline 0.45)" in text
+    assert "ground truth: 4 hers (3 pinned + 1 on score) · 3 not hers (all blocked)" in text
+    assert "of which pinned" in text and "blocked in" in text
+    assert "only your keep decision saves them" not in text, "wording avoids the review-backlog framing"
+    assert "<- current" in text
 
 
 def test_evaluate_default_range_is_wide():

@@ -101,8 +101,12 @@ uv run scripts/review_server.py <name> --threshold 0.55   # http://127.0.0.1:876
 After clicking through, check the threshold against your own decisions:
 
 ```bash
-uv run scripts/face_filter.py evaluate <name>
+uv run scripts/face_filter.py evaluate <name> [--baseline 0.55]
 ```
+
+`found` / `lost` are measured over the photos counted as hers — your `keep`
+pins plus undecided matches at the baseline, which is the honest assumption that
+what you ship today is right; `blocked out` / `blocked in` cover your `drop`s.
 
 `keep` exports a photo the score missed (even with no detected face), `drop`
 removes a false positive. Decisions are stored in `refs/<name>/overrides.json`
