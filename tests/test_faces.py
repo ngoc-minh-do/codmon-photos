@@ -36,6 +36,13 @@ def test_sweep_counts_and_shares():
     assert got == {0.30: (3, 75), 0.45: (2, 50), 0.60: (1, 25)}
 
 
+def _write_sheet(db, person, rows, out, threshold, min_face, **kwargs):
+    """render_report -> file; the review server renders the same HTML on the fly."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(faces.render_report(db, person, rows, out, threshold, min_face, **kwargs), encoding="utf-8")
+    return out
+
+
 def test_matched_rows_needs_a_face_and_the_threshold(tmp_path):
     rows = [
         {"path": tmp_path / "a.jpg", "score": 0.55, "faces": 2},
@@ -538,7 +545,7 @@ def test_report_links_photos_and_badges_every_state(tmp_path):
     add_ref(db)
     out = tmp_path / ".cache" / "report-kid-yunet.html"
 
-    faces.write_report(db, "kid", _report_rows(tmp_path), out, 0.45, 40)
+    _write_sheet(db, "kid", _report_rows(tmp_path), out, 0.45, 40)
     html_text = out.read_text()
 
     assert "data:image" not in html_text, "images must be referenced, not embedded"
@@ -688,7 +695,7 @@ def test_report_collapses_albums_and_counts_them(tmp_path):
     rows = _report_rows(tmp_path)  # one matched (0.6), one below (0.4), one unusable
     out = tmp_path / ".cache" / "album.html"
 
-    faces.write_report(db, "kid", rows, out, 0.45, 40)
+    _write_sheet(db, "kid", rows, out, 0.45, 40)
     html_text = out.read_text()
 
     assert html_text.count("<details class='album'") == 1
@@ -703,7 +710,7 @@ def test_report_album_without_matches_starts_collapsed(tmp_path):
     rows = _report_rows(tmp_path)
     out = tmp_path / ".cache" / "closed.html"
 
-    faces.write_report(db, "kid", rows, out, 0.95, 40)  # nothing reaches 0.95
+    _write_sheet(db, "kid", rows, out, 0.95, 40)  # nothing reaches 0.95
     html_text = out.read_text()
 
     assert "<details class='album' open>" not in html_text
@@ -774,7 +781,7 @@ def test_report_marks_manual_decisions(tmp_path):
     rows[2]["override"] = "keep"  # the no-face photo
     out = tmp_path / ".cache" / "manual.html"
 
-    faces.write_report(db, "kid", rows, out, 0.45, 40)
+    _write_sheet(db, "kid", rows, out, 0.45, 40)
     html_text = out.read_text()
 
     assert ">DROPPED<" in html_text and ">ADDED<" in html_text
@@ -788,7 +795,7 @@ def test_report_can_render_action_buttons(tmp_path):
     add_ref(db)
     out = tmp_path / ".cache" / "interactive.html"
 
-    faces.write_report(db, "kid", _report_rows(tmp_path), out, 0.45, 40, interactive=True)
+    _write_sheet(db, "kid", _report_rows(tmp_path), out, 0.45, 40, interactive=True)
     html_text = out.read_text()
 
     assert html_text.count('class="actions"') == 3, "one action row per photo card"
@@ -802,7 +809,7 @@ def test_render_report_can_serve_images_from_the_server(tmp_path):
     add_ref(db)
     out = tmp_path / ".cache" / "served.html"
 
-    faces.write_report(
+    _write_sheet(
         db,
         "kid",
         _report_rows(tmp_path),
@@ -893,9 +900,9 @@ def test_render_report_can_show_file_names(tmp_path):
     add_ref(db)
     out = tmp_path / ".cache" / "named.html"
 
-    faces.write_report(db, "kid", _report_rows(tmp_path), out, 0.45, 40, interactive=True, show_names=True)
+    _write_sheet(db, "kid", _report_rows(tmp_path), out, 0.45, 40, interactive=True, show_names=True)
     with_names = out.read_text()
-    faces.write_report(db, "kid", _report_rows(tmp_path), out, 0.45, 40, interactive=True)
+    _write_sheet(db, "kid", _report_rows(tmp_path), out, 0.45, 40, interactive=True)
     without = out.read_text()
 
     assert with_names.count('class="fname"') == 3

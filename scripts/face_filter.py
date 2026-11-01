@@ -3,9 +3,11 @@
 
     uv run scripts/face_filter.py enroll <name>        # refs/<name>/face/*.jpg -> gallery
     uv run scripts/face_filter.py scan                 # detect + embed every photo (cached)
-    uv run scripts/face_filter.py report <name>        # review sheet + threshold sweep
+    uv run scripts/face_filter.py evaluate <name>      # how each threshold scores vs your decisions
     uv run scripts/face_filter.py export <name> --threshold 0.55
     uv run scripts/face_filter.py upload <name>            # -> SMB share
+
+``review_server.py`` serves the review sheet and records keep/drop decisions.
 
 References live in ``refs/<name>/face/``; embeddings and scores in
 ``.cache/faces.db``; models in ``.cache/models``. ``export`` copies matches to
@@ -28,7 +30,7 @@ from dotenv import load_dotenv
 
 
 def collect_rows(args):
-    """Rows for ``person`` with hand decisions applied; shared by report/export/evaluate."""
+    """Rows for ``person`` with hand decisions applied; shared by export and evaluate."""
     db = faces.open_db(args.db)
     overrides_file = faces.overrides_path(args.refs, args.person)
     overrides = faces.load_overrides(overrides_file)
@@ -53,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  uv run scripts/face_filter.py enroll kid\n"
             "  uv run scripts/face_filter.py scan\n"
-            "  uv run scripts/face_filter.py report kid --threshold 0.55\n"
+            "  uv run scripts/face_filter.py evaluate kid --baseline 0.55\n"
             "  uv run scripts/face_filter.py export kid --threshold 0.55 --yes\n"
         ),
     )
@@ -93,13 +95,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force", action="store_true", help="re-enroll even if references already exist")
 
     sub.add_parser("scan", parents=[common], help="detect + embed every photo (cached per content+detector)")
-
-    p = sub.add_parser(
-        "report", parents=[common], help="write .cache/report-<name>-<detector>.html and print the threshold sweep"
-    )
-    p.add_argument("person")
-    p.add_argument("--threshold", type=float, default=faces.DEFAULT_THRESHOLD)
-    p.add_argument("--out", type=Path, default=None, help="sheet path (default: .cache/report-<name>-<detector>.html)")
 
     p = sub.add_parser("export", parents=[common], help="copy matching photos to matched/<name>/<album>/")
     p.add_argument("person")
@@ -227,19 +222,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     rows = collect_rows(args)
-
-    if args.cmd == "report":
-        out = args.out or args.db.parent / f"report-{args.person}-{args.detector}.html"
-        print("threshold  photos kept  share")
-        for threshold, kept, share in faces.sweep(rows):
-            mark = "  <- current" if abs(threshold - args.threshold) < 1e-9 else ""
-            print(f"   {threshold:.2f}      {kept:5d}     {share:3.0f}%{mark}")
-        unknown = sum(1 for row in rows if not row["faces"])
-        if unknown:
-            print(f"{unknown} photo(s) have no face wider than {args.min_face:.0f}px and are never counted as hers")
-        sheet = faces.write_report(faces.open_db(args.db), args.person, rows, out, args.threshold, args.min_face)
-        print(f"wrote {sheet}")
-        return 0
 
     stats = faces.export_matches(
         rows, args.person, args.matched, args.threshold, link=args.link, prune=args.prune, apply=args.yes

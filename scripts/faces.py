@@ -46,9 +46,9 @@ DEFAULT_REFS = Path("refs")
 DEFAULT_MIN_FACE = 40  # narrower faces are detected but not judged
 DEFAULT_FLOOR = 20  # faces narrower than this are never stored
 DEFAULT_THRESHOLD = 0.55  # measured: below this, other children score as matches
-BANDS = (0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65)
-# evaluate walks a wider ladder than the report sweep: the sweep is about picking
-# one of a few candidates, this is about seeing where the two populations meet.
+BANDS = (0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65)  # compact table in the review sheet
+# evaluate walks a 0.20..0.95 ladder: seeing where the two populations meet, not
+# just picking one of a few candidates.
 EVALUATE_EDGES = tuple(round(0.20 + 0.05 * i, 2) for i in range(16))  # 0.20 .. 0.95
 
 # ArcFace 5-point template (112x112); same constants as insightface's norm_crop.
@@ -1216,26 +1216,6 @@ def face_box_style(box, width: int, height: int) -> str:
         f"left:{x / width * 100:.2f}%;top:{y / height * 100:.2f}%;"
         f"width:{w / width * 100:.2f}%;height:{h / height * 100:.2f}%"
     )
-
-
-def write_report(
-    db: sqlite3.Connection,
-    person: str,
-    rows: list[dict],
-    out: Path,
-    threshold: float,
-    min_face: float,
-    interactive: bool = False,
-    src_for=None,
-    show_names: bool = False,
-) -> Path:
-    """Write ``render_report`` output to ``out``."""
-    out.parent.mkdir(parents=True, exist_ok=True)
-    body = render_report(
-        db, person, rows, out, threshold, min_face, interactive, src_for=src_for, show_names=show_names
-    )
-    out.write_text(body, encoding="utf-8")
-    return out
 
 
 def render_report(

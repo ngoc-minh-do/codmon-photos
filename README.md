@@ -64,7 +64,7 @@ photos you enroll once.
 # put 4-6 face photos of your child in refs/<name>/face/
 uv run scripts/face_filter.py enroll <name>          # build the reference gallery
 uv run scripts/face_filter.py scan                   # embed every photo (cached)
-uv run scripts/face_filter.py report <name>          # threshold sweep + review sheet
+uv run scripts/face_filter.py evaluate <name>        # how each cutoff scores vs your decisions
 uv run scripts/face_filter.py export <name> --threshold 0.55 --yes
 uv run scripts/face_filter.py upload <name> --yes   # optional: mirror to the NAS
 ```
@@ -83,16 +83,17 @@ uv run scripts/face_filter.py compare <name> --threshold 0.55
 `compare` reports how many photos both detectors keep, how many only one does,
 and the score delta on the photos both catch.
 
-`report` writes a self-contained `.cache/report-<name>.html` with every photo,
-its best similarity score and the matched face crop, so the cutoff can be picked
-by looking rather than guessing. `export` **copies** matching photos to
-`matched/<name>/<album>/` and leaves `downloads/` exactly as downloaded; `--link`
-hardlinks instead of copying, `--prune` drops earlier copies that no longer
-match. Scores are cached in `.cache/faces.db` keyed by file content, so trying
-another threshold never re-runs a model and never needs a re-scan.
+`export` **copies** matching photos to `matched/<name>/<album>/` and leaves
+`downloads/` exactly as downloaded; `--link` hardlinks instead of copying,
+`--prune` drops earlier copies that no longer match. Scores are cached in
+`.cache/faces.db` keyed by file content, so trying another threshold never
+re-runs a model and never needs a re-scan.
 
-Photos the model gets wrong can be corrected by hand without touching the
-model or the threshold — run the local review server and click:
+The cutoff is picked by looking rather than guessing: the review server serves
+a sheet with every photo, its best similarity score and the matched face crop,
+and records keep/drop decisions as you click. Those decisions win over the
+score, so photos the model gets wrong can be corrected without touching the
+model or the threshold:
 
 ```bash
 uv run scripts/review_server.py <name> --threshold 0.55   # http://127.0.0.1:8765
@@ -128,13 +129,13 @@ embeddings stay on your machine, and the ONNX models are downloaded once into
 
 - `scripts/codmon_sync.py` — the pipeline (login → download to dated folder; SMB-only mode when configured)
 - `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline, albums)
-- `scripts/faces.py` — face detect/align/embed, embedding cache, scoring, review sheet
+- `scripts/faces.py` — face detect/align/embed, embedding cache, scoring, HTML review sheet
 - `scripts/smb_sync.py` — upload planning/mirroring for the SMB share
 - `scripts/notify.py` — Apprise webhook POST
-- `scripts/face_filter.py` — CLI: `enroll` / `scan` / `report` / `export` / `upload`
+- `scripts/face_filter.py` — CLI: `enroll` / `scan` / `evaluate` / `export` / `upload` / `compare`
 - `refs/<name>/face/*.jpg` — reference photos of a child (git-ignored)
 - `matched/<name>/<album>/` — copies of the photos that matched (git-ignored)
-- `.cache/` — content-addressed embedding cache, ONNX models, review sheets (git-ignored)
+- `.cache/` — embedding cache, ONNX models, aligned reference crops, comparison sheets (git-ignored)
 - `pyproject.toml` / `uv.lock` — uv-managed deps
 - `.env.example` — credentials template; copy to `.env`
 - `downloads/<display_date>_<album_title>/` — where photos land

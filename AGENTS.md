@@ -60,7 +60,6 @@ tags (each photo row is only `{id, url}`).
 # 1. put 4-6 face photos in refs/<name>/face/ (not cropped to the face)
 uv run scripts/face_filter.py enroll <name>
 uv run scripts/face_filter.py scan                    # detect + embed every photo (cached)
-uv run scripts/face_filter.py report <name>            # sweep + .cache/report-<name>.html
 uv run scripts/face_filter.py export <name> --threshold 0.55 --yes
 uv run scripts/face_filter.py upload <name> --yes      # optional: mirror to the NAS
 uv run scripts/face_filter.py compare <name> --threshold 0.55   # scrfd vs yunet
@@ -138,13 +137,13 @@ Rules:
 
 - `scripts/codmon_sync.py` — the pipeline (login -> download to dated folder; no uploads)
 - `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline)
-- `scripts/faces.py` — detect/align/embed, content-addressed sqlite cache, scoring, report
-- `scripts/face_filter.py` — CLI over `faces.py` (enroll / scan / report / export / upload)
+- `scripts/faces.py` — detect/align/embed, content-addressed sqlite cache, scoring, review sheet
+- `scripts/face_filter.py` — CLI over `faces.py` (enroll / scan / evaluate / export / upload / compare)
 - `scripts/smb_sync.py` — upload planning + mirroring to the SMB share
 - `scripts/notify.py` — Apprise webhook POST
 - `refs/<name>/face/*.jpg` — reference photos of a child (gitignored)
 - `matched/<name>/<album>/` — copies of the photos that matched (gitignored)
-- `.cache/` — sqlite embedding cache, ONNX models, review reports (gitignored)
+- `.cache/` — sqlite embedding cache, ONNX models, aligned reference crops, comparison sheets (gitignored)
 - `pyproject.toml` / `uv.lock` — uv-managed deps
 - `.env.example` — credentials template; copy to `.env`
 - `downloads/<date>_<title>/` — where albums land (always local)

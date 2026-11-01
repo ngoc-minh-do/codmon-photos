@@ -43,7 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   photos the model misses or misjudges are corrected by hand instead of by
   changing the model or the threshold. Decisions live in
   `refs/<name>/overrides.json` (`album/file.JPG` -> `keep`/`drop`) and override
-  the score in `report`, `export` and `prune`.
+  the score in `export` and `prune`.
 - Album discovery skips `kind=8` timeline entries that carry no photos (attendance
   forms, absence notices) and tolerates a 404 from the albums endpoint, so one
   unrelated item can no longer abort a whole run.
+
+### Removed
+
+- `face_filter.py report`: the threshold sweep is printed by `evaluate`, which
+  scores each cutoff against your own keep/drop decisions, and the HTML sheet is
+  what `review_server.py` serves — the same page, with buttons that record them.
