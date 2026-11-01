@@ -10,6 +10,7 @@ import argparse
 import os
 import subprocess
 import time
+import urllib.parse
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -107,7 +108,13 @@ def calibrate(entries):
 
 
 def name_of(url):
-    return f"{url.split('/albums/')[-1].split('?')[0]}"
+    """Filename from a signed album URL, percent-decoded.
+
+    The CDN escapes some names (``IMG_5706%281%29.JPG`` is really
+    ``IMG_5706(1).JPG``). Keeping the escapes puts a literal ``%`` in the
+    filename, which every URL consumer then has to re-escape.
+    """
+    return urllib.parse.unquote(url.split("/albums/")[-1].split("?")[0])
 
 
 def plan_names(entries):

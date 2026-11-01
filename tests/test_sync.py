@@ -60,3 +60,9 @@ def test_stamp_exif(tmp_path):
     exif = piexif.load(str(path))
     assert exif["Exif"][piexif.ExifIFD.DateTimeOriginal] == b"2026:10:05 11:39:12"
     assert exif["Exif"][piexif.ExifIFD.OffsetTimeOriginal] == b"+09:00"
+
+
+def test_name_of_decodes_percent_escapes():
+    url = "https://image.codmon.com/codmon/1/albums/IMG_5706%281%29.JPG?Policy=xyz&width=500"
+    assert m.name_of(url) == "IMG_5706(1).JPG"
+    assert m.name_of("https://image.codmon.com/codmon/1/albums/IMG_8135.JPG?Policy=x") == "IMG_8135.JPG"
