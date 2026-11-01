@@ -1057,7 +1057,6 @@ def write_report(
     out: Path,
     threshold: float,
     min_face: float,
-    only: str = "all",
 ) -> Path:
     """HTML sheet with one collapsible section per album.
 
@@ -1067,11 +1066,7 @@ def write_report(
     (nothing embedded), so re-running at another threshold is instant.
     """
     out.parent.mkdir(parents=True, exist_ok=True)
-    shown = [r for r in rows if only == "all" or verdict(r, threshold) == only]
-    parts = [f"<h1>Scores for {person!r} — threshold {threshold:.2f}, min face {min_face:.0f}px"]
-    if only != "all":
-        parts[0] += f", showing {only} only"
-    parts.append("</h1>")
+    parts = [f"<h1>Scores for {person!r} — threshold {threshold:.2f}, min face {min_face:.0f}px</h1>"]
 
     parts.append("<h2>Enrolled references (verify these are all her)</h2><div>")
     query = "SELECT source, crop FROM refs WHERE person = ? AND pipeline = ? ORDER BY source"
@@ -1084,16 +1079,13 @@ def write_report(
     parts.append("</div>")
 
     unknown = sum(1 for r in rows if not r["faces"])
-    parts.append(f"<h2>{len(rows)} photos, {unknown} with no usable face (&lt; {min_face:.0f}px)")
-    if only != "all":
-        parts[-1] += f", {len(shown)} shown"
-    parts.append("</h2>")
+    parts.append(f"<h2>{len(rows)} photos, {unknown} with no usable face (&lt; {min_face:.0f}px)</h2>")
     parts.append("<table><tr><th>threshold</th><th>photos kept</th><th>share kept</th></tr>")
     parts.extend(f"<tr><td>{t:.2f}</td><td>{kept}</td><td>{share:.0f}%</td></tr>" for t, kept, share in sweep(rows))
     parts.append("</table>")
 
-    for album in sorted({r["album"] for r in shown}):
-        group = [r for r in shown if r["album"] == album]
+    for album in sorted({r["album"] for r in rows}):
+        group = [r for r in rows if r["album"] == album]
         states = [verdict(r, threshold) for r in group]
         matched = states.count("matched")
         unusable = states.count("unknown")

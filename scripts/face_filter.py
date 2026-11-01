@@ -88,12 +88,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("person")
     p.add_argument("--threshold", type=float, default=faces.DEFAULT_THRESHOLD)
     p.add_argument("--out", type=Path, default=None, help="sheet path (default: .cache/report-<name>-<detector>.html)")
-    p.add_argument(
-        "--only",
-        choices=("all", "matched", "below", "unknown"),
-        default="all",
-        help="render only one verdict (default: all)",
-    )
 
     p = sub.add_parser("export", parents=[common], help="copy matching photos to matched/<name>/<album>/")
     p.add_argument("person")
@@ -212,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
         unknown = sum(1 for row in rows if not row["faces"])
         if unknown:
             print(f"{unknown} photo(s) have no face wider than {args.min_face:.0f}px and are never counted as hers")
-        sheet = faces.write_report(db, args.person, rows, out, args.threshold, args.min_face, args.only)
+        sheet = faces.write_report(db, args.person, rows, out, args.threshold, args.min_face)
         print(f"wrote {sheet}")
         return 0
 

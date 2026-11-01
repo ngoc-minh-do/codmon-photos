@@ -558,20 +558,6 @@ def test_report_links_photos_and_badges_every_state(tmp_path):
     assert 'title="album/p0.jpg"' in html_text
 
 
-def test_report_only_filters_to_one_verdict(tmp_path):
-    db = faces.open_db(tmp_path / "faces.db")
-    add_ref(db)
-    rows = _report_rows(tmp_path)
-    out = tmp_path / ".cache" / "only.html"
-
-    faces.write_report(db, "kid", rows, out, 0.45, 40, only="matched")
-    html_text = out.read_text()
-    assert html_text.count('class="card') == 2, "one reference card + the single match"
-    assert "p1.jpg" not in html_text and "p2.jpg" not in html_text
-    assert ">below<" not in html_text and ">no face<" not in html_text
-    assert "showing matched only" in html_text
-
-
 def test_dispute_kind_separates_detection_from_boundary_noise():
     same_two = {"faces": 2, "score": 0.46}
     assert faces.dispute_kind({"faces": 2, "score": 0.44}, same_two) == "boundary"
@@ -707,19 +693,6 @@ def test_report_collapses_albums_and_counts_them(tmp_path):
     assert "<details class='album' open>" in html_text, "an album with a match starts open"
     assert "3 photos · 1 matched · 1 below (1 within 0.10) · 1 unusable" in html_text
     assert "@media print{details{display:block}" in html_text, "collapsed albums still print"
-
-
-def test_report_omits_albums_with_nothing_to_show(tmp_path):
-    db = faces.open_db(tmp_path / "faces.db")
-    add_ref(db)
-    rows = _report_rows(tmp_path)
-    out = tmp_path / ".cache" / "only.html"
-
-    faces.write_report(db, "kid", rows, out, 0.45, 40, only="matched")
-    html_text = out.read_text()
-
-    assert html_text.count("<details class='album'") == 1
-    assert "0 matched" not in html_text, "no empty album sections"
 
 
 def test_report_album_without_matches_starts_collapsed(tmp_path):
