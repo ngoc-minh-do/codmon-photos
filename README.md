@@ -5,74 +5,112 @@
 Download your child's nursery photo albums from
 [Codmon](https://parents.codmon.com/) at the best resolution its CDN allows.
 
-Codmon exposes no public parent API, but the parent web app is an SPA that
-talks to an internal JSON API (`ps-api.codmon.com`) using session cookies from a
-plain email/password `POST /login`. This project uses that API directly with the
-Python standard library — **no browser needed**.
+Codmon has no public parent API. The parent web app is an SPA over an internal
+JSON API (`ps-api.codmon.com`) with an email/password login, and these scripts
+call that API directly — no browser, no pasted JSON. The integration is
+unofficial, so a Codmon API change can break it.
 
-The integration is unofficial and can break if Codmon changes its API.
+## Features
 
-## What it does
+- **Album discovery** over the last 45 days, one specific day, or a longer
+  window of your choosing.
+- **Calibrated resolution** — one probe per photo to learn its orientation, then
+  one size combo per orientation chosen from a sample, instead of guessing or
+  fetching every photo twice.
+- **Restored EXIF dates** — the CDN strips EXIF, so each download gets the
+  album's timestamp back as `DateTimeOriginal` / `OffsetTimeOriginal`; importers
+  (Immich, Windows, …) then file photos by shooting date.
+- **Face filter (optional)** — keeps the photos a chosen child appears in, with
+  a local review page for the borderline calls.
+- **SMB mirror (optional)** — pushes that filtered folder to a NAS share.
 
-1. **Discover** — log in, resolve the nursery `service_id`, scan the timeline
-   for photo albums and pull each album's full photo list from the albums
-   detail endpoint.
-2. **Calibrate** (the resolution is never searched per-photo): one tiny
-   `width=10` probe per photo learns its orientation; one landscape + one
-   portrait sample decide which of the two 500-cap size combos yields the
-   largest output for each orientation.
-3. **Download** — fetch every photo exactly once at the calibrated combo into
-   `./downloads/<display_date>_<album_title>`.
-4. **Stamp** — the CDN strips all EXIF, so each JPEG gets `DateTimeOriginal`
-   and `OffsetTimeOriginal` (default `+09:00` Tokyo) backfilled from the
-   album's `insert_datetime`; without this, importers (Immich, Windows) date
-   the photos at download time.
-5. **Export + mirror (optional)** — albums always stay in `./downloads/`. The
-   face filter can copy the photos a given child appears in to
-   `matched/<name>/`, and `face_filter.py upload` mirrors that folder to a NAS
-   SMB share (`//<host>/<share>/<name>/<album>/`). Albums are never uploaded.
+## How it works
+
+1. **Log in and discover** — resolve the nursery, scan the timeline for photo
+   albums, and pull each album's photo list.
+2. **Classify and calibrate** — a tiny `width=10` probe per photo tells landscape
+   from portrait; one sample per orientation decides which of the two
+   `500`-capped size combos yields the larger image.
+3. **Download and stamp** — every photo is fetched exactly once at the
+   calibrated size into
+   `./downloads/<display_date>_<album_title>/` (a `_<album_id>` suffix is added
+   when two albums share a date and title), then stamped with the album's EXIF
+   date in Tokyo time.
+
+Albums whose folder already contains files are skipped, so re-runs resume
+cheaply.
 
 ## Setup
 
-```bash
-cp .env.example .env   # fill CODMON_EMAIL / CODMON_PASSWORD (and optionally SMB_*)
-uv sync                # creates .venv, installs deps
-```
-
 Requires [uv](https://docs.astral.sh/uv/) and Python ≥ 3.14.
 
-## Run
-
 ```bash
-uv run scripts/codmon_sync.py                      # scan last 45 days, download every album found
-uv run scripts/codmon_sync.py --date 2026-10-05    # one specific day
-uv run scripts/codmon_sync.py --lookback 90        # a longer window
+cp .env.example .env   # fill CODMON_EMAIL / CODMON_PASSWORD (and optionally SMB_* / APPRISE_URL)
+uv sync
 ```
 
-Options: `--date`, `--lookback` (default 45 days), `--out`, `--workers`,
-`--tz`. Set `APPRISE_URL` in `.env` to get a success notification after an
-upload that actually put photos on the share (all-skip runs stay silent). Run
-`uv run scripts/codmon_sync.py -h`.
+`TZ` (default `Asia/Tokyo`) sets the timezone used to resolve "today" for the
+scan window.
 
-## Filter by face (optional)
+## Usage
 
-Keep only the photos your child is in. The Codmon API carries no per-child tags,
-so this runs locally: face detection (YuNet) + ArcFace embeddings compared with
-photos you enroll once.
+```bash
+uv run scripts/codmon_sync.py                      # last 45 days, every album found
+uv run scripts/codmon_sync.py --date 2026-10-05    # one specific day
+uv run scripts/codmon_sync.py --lookback 90        # a longer window
+uv run scripts/codmon_sync.py --dry-run            # list albums and photos, write nothing
+```
+
+Options: `--out` (default `downloads`), `--date`, `--lookback` (default 45
+days), `--workers` (default 4), `--tz` (EXIF offset, default `+09:00`),
+`--dry-run`. Run with `-h` for the full list.
+
+## Face filter (optional)
+
+The API carries no per-child tags, so this runs locally: face detection plus
+ArcFace embeddings compared against reference photos you enroll once.
 
 ```bash
 # put 4-6 face photos of your child in refs/<name>/face/
 uv run scripts/face_filter.py enroll <name>          # build the reference gallery
-uv run scripts/face_filter.py scan                   # embed every photo (cached)
-uv run scripts/face_filter.py evaluate <name>        # how each cutoff scores vs your decisions
+uv run scripts/face_filter.py scan                   # detect + embed every photo (cached)
 uv run scripts/face_filter.py export <name> --threshold 0.55 --yes
-uv run scripts/face_filter.py upload <name> --yes   # optional: mirror to the NAS
+uv run scripts/face_filter.py upload <name> --yes    # optional: mirror to the NAS
 ```
 
-Two detectors are available: `--detector scrfd` (default, buffalo_l's `det_10g`)
-and `--detector yunet` (finds more of the tiny faces a 500px CDN photo leaves
-behind, but its landmarks drift on tilted faces). Scans are cached per detector,
-so both can be run and compared:
+`enroll` reports its aligned crops under `.cache/refs/<name>/<detector>/` so you
+can confirm they are all the same child. `scan` caches embeddings by file
+content, so changing `--threshold` or `--min-face` only re-scores.
+
+### Picking a threshold
+
+`export` is a dry run without `--yes` and prints each match with its score. The
+cutoff sits around 0.40–0.55 on these ~500px photos: close-ups score above 0.6,
+while wide group shots are where it fails.
+
+For a visual pass, serve the review sheet and click keep / drop per photo:
+
+```bash
+uv run scripts/review_server.py <name> --threshold 0.55   # http://127.0.0.1:8765
+```
+
+Decisions are stored in `refs/<name>/overrides.json` (keyed by
+`album/file.JPG`) and override the score in both directions: `keep` exports a
+photo that scored low or had no detectable face, `drop` removes a false
+positive. Check a cutoff against those decisions with:
+
+```bash
+uv run scripts/face_filter.py evaluate <name> [--baseline 0.55]
+```
+
+`found` / `lost` count photos treated as hers (your `keep` pins plus undecided
+matches at the baseline); `blocked out` / `blocked in` cover your `drop`s.
+
+### Detectors
+
+`--detector scrfd` (default) is InsightFace's `det_10g`; `--detector yunet` is
+the OpenCV alternative. Scans are cached per detector, so both can be run and
+compared:
 
 ```bash
 uv run scripts/face_filter.py scan --detector scrfd
@@ -81,72 +119,48 @@ uv run scripts/face_filter.py compare <name> --threshold 0.55
 ```
 
 `compare` reports how many photos both detectors keep, how many only one does,
-and the score delta on the photos both catch.
+and the score delta on the photos both catch. SCRFD stays the default because
+its landmarks hold on tilted faces; YuNet's drift there ruins the aligned crop.
 
-`export` **copies** matching photos to `matched/<name>/<album>/` and leaves
-`downloads/` exactly as downloaded; `--link` hardlinks instead of copying,
-`--prune` drops earlier copies that no longer match. Scores are cached in
-`.cache/faces.db` keyed by file content, so trying another threshold never
-re-runs a model and never needs a re-scan.
+### Export and upload
 
-The cutoff is picked by looking rather than guessing: the review server serves
-a sheet with every photo, its best similarity score and the matched face crop,
-and records keep/drop decisions as you click. Those decisions win over the
-score, so photos the model gets wrong can be corrected without touching the
-model or the threshold:
+`export` **copies** matches to `matched/<name>/<album>/` and leaves `downloads/`
+untouched; `--link` hardlinks instead, `--prune` drops earlier copies that no
+longer match.
 
-```bash
-uv run scripts/review_server.py <name> --threshold 0.55   # http://127.0.0.1:8765
-```
+`upload` needs all four `SMB_*` vars and mirrors only `matched/<name>/` to
+`//<host>/<share>/<name>/<album>/`, skipping files already present with the same
+name and size. Nothing is deleted without `--delete`, and album folders are
+never uploaded. `APPRISE_URL` notifies after an upload that moved photos;
+downloads stay silent.
 
-After clicking through, check the threshold against your own decisions:
+## Known limitations
 
-```bash
-uv run scripts/face_filter.py evaluate <name> [--baseline 0.55]
-```
-
-`found` / `lost` are measured over the photos counted as hers — your `keep`
-pins plus undecided matches at the baseline, which is the honest assumption that
-what you ship today is right; `blocked out` / `blocked in` cover your `drop`s.
-
-Every card carries the file name (and the full path on hover), so a decision can
-be traced back to a file without leaving the page.
-
-`keep` exports a photo the score missed (even with no detected face), `drop`
-removes a false positive. Decisions are stored in `refs/<name>/overrides.json`
-keyed by `album/file.JPG`, and `export` / `prune` respect them.
-
-`upload` needs all four `SMB_*` vars in `.env`; it uploads only files missing on
-the share (same name and size are skipped) and never deletes anything unless
-`--delete` is passed. `APPRISE_URL` fires after an upload that actually moved
-photos, not after a download.
-
-`refs/`, `matched/` and `.cache/` are git-ignored: reference photos and
-embeddings stay on your machine, and the ONNX models are downloaded once into
-`.cache/models`.
+- Unofficial API: reverse-engineered and subject to change.
+- Signed photo URLs expire in ~40 minutes. A 403 mid-run means re-run the
+  script, which fetches fresh URLs.
+- Detection runs on CDN-sized photos where a face is typically ~30px wide.
+  Nothing below 20px is stored, and wide group shots are where matching fails.
+- Body re-identification is deliberately absent — the available ReID model only
+  works short-term, within a single outfit, and found nothing on these photos.
 
 ## Layout
 
-- `scripts/codmon_sync.py` — the pipeline (login → download to dated folder; SMB-only mode when configured)
-- `scripts/codmon_api.py` — Codmon parent-API client (login, children, timeline, albums)
-- `scripts/faces.py` — face detect/align/embed, embedding cache, scoring, HTML review sheet
-- `scripts/smb_sync.py` — upload planning/mirroring for the SMB share
-- `scripts/notify.py` — Apprise webhook POST
-- `scripts/face_filter.py` — CLI: `enroll` / `scan` / `evaluate` / `export` / `upload` / `compare`
-- `refs/<name>/face/*.jpg` — reference photos of a child (git-ignored)
-- `matched/<name>/<album>/` — copies of the photos that matched (git-ignored)
-- `.cache/` — embedding cache, ONNX models, aligned reference crops, comparison sheets (git-ignored)
-- `pyproject.toml` / `uv.lock` — uv-managed deps
-- `.env.example` — credentials template; copy to `.env`
-- `downloads/<display_date>_<album_title>/` — where photos land
+| Path | Contents |
+| --- | --- |
+| `scripts/` | all implementation: album sync, Codmon API client, face pipeline, review page, SMB mirror, webhook |
+| `tests/` | pytest suite (imports modules from `scripts/`) |
+| `downloads/` | downloaded albums, one folder per album (git-ignored) |
+| `refs/` | reference photos per child — the only manual input (git-ignored) |
+| `matched/` | filtered copies per child/album (git-ignored) |
+| `.cache/` | embedding cache, ONNX models, derived crops and sheets (git-ignored) |
+| root | `pyproject.toml` + `uv.lock` (deps), `Makefile` (gates), `.env.example` (config template) |
 
-## Disclaimer / risk
+## Development
 
-- Uses your own account credentials to read Codmon; the API is reverse-engineered
-  and unofficial. Use at your own risk.
-- Signed photo URLs expire in ~40 minutes; a 403 mid-run just means re-run the
-  script (it re-fetches fresh URLs).
-- Credentials live only in `.env`, which is git-ignored.
+```bash
+make check   # lint + format-check + compile + tests, the same gate CI runs
+```
 
 ## Contributing
 
