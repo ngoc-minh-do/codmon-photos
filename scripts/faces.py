@@ -736,14 +736,22 @@ def evaluate(rows: list[dict], edges=BANDS) -> list[dict]:
     ]
 
 
+EVALUATE_LEGEND = """\
+  keeps found     keep photos the score would have accepted on its own
+  keeps pinned    keep photos below the threshold - only your keep decision saves them
+  drops rejected  drop photos below the threshold - the score already excludes them
+  drops leaked    drop photos above the threshold - only your drop keeps them out"""
+
+
 def evaluate_report(rows: list[dict], edges=BANDS) -> str:
     """Text table over ``evaluate`` results, plus what is still unreviewed."""
     table = evaluate(rows, edges)
-    reviewed = sum(1 for r in rows if r.get("override"))
+    keeps = sum(1 for r in rows if r.get("override") == "keep")
+    drops = sum(1 for r in rows if r.get("override") == "drop")
     lines = [
-        f"{reviewed} reviewed of {len(rows)} photos "
-        f"({sum(1 for r in rows if r.get('override') == 'keep')} keep, "
-        f"{sum(1 for r in rows if r.get('override') == 'drop')} drop)",
+        f"{keeps + drops} reviewed of {len(rows)} photos ({keeps} keep, {drops} drop)",
+        "",
+        EVALUATE_LEGEND,
         "",
         f"  {'threshold':>9} {'keeps found':>12} {'keeps pinned':>13} {'drops rejected':>15} {'drops leaked':>13}",
     ]
@@ -752,6 +760,8 @@ def evaluate_report(rows: list[dict], edges=BANDS) -> str:
             f"  {row['threshold']:9.2f} {row['keeps_matched']:12d} {row['keeps'] - row['keeps_matched']:13d} "
             f"{row['drops'] - row['drops_matched']:15d} {row['drops_matched']:13d}"
         )
+    lines.append("")
+    lines.append("  a good threshold keeps drops leaked at 0 without pinning keeps that already score above it")
     return "\n".join(lines)
 
 

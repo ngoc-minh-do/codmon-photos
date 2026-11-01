@@ -848,5 +848,8 @@ def test_evaluate_counts_what_each_threshold_agrees_with():
 def test_evaluate_report_states_reviewed_and_pinned_counts():
     text = faces.evaluate_report(_reviewed_rows(), edges=(0.45,))
     assert "6 reviewed of 7 photos (3 keep, 3 drop)" in text, "unreviewed rows are excluded"
-    assert "keeps pinned" in text and "drops leaked" in text
+    assert "keeps found" in text and "drops leaked" in text
+    assert "only your keep decision saves them" in text
+    assert "only your drop keeps them out" in text
+    assert "keeps found + keeps pinned" not in text, "the legend explains, it does not restate the formula twice"
     assert "0.45" in text
