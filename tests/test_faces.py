@@ -496,13 +496,21 @@ def test_face_box_style_is_percentage_of_the_image():
     assert faces.face_box_style((1, 2, 3, 4), 0, 0) == ""
 
 
-def test_image_src_is_relative_and_not_double_encoded(tmp_path):
+def test_image_src_encodes_for_urls_and_decodes_back_to_the_file(tmp_path):
+    import urllib.parse
+
     sheet = tmp_path / ".cache" / "report.html"
     photo = tmp_path / "downloads" / "2026-05-11_〈全クラス〉春" / "IMG_5706%281%29.JPG"
+    photo.parent.mkdir(parents=True)
+    photo.write_bytes(b"x")
+
     src = faces.image_src(photo, sheet)
-    assert src == "../downloads/2026-05-11_〈全クラス〉春/IMG_5706%281%29.JPG"
-    assert (sheet.parent / src).exists() is False  # file not created; the path shape is what matters
-    assert "%2528" not in src, "existing %28 escapes must survive"
+
+    # a literal % in a filename must be %25 in the URL, or the browser reads %28 as "("
+    assert "IMG_5706%25281%2529.JPG" in src
+    assert "〈" not in src, "non-ASCII is percent-encoded for the URL"
+    assert urllib.parse.unquote(src) == "../downloads/2026-05-11_〈全クラス〉春/IMG_5706%281%29.JPG"
+    assert (sheet.parent / urllib.parse.unquote(src)).resolve() == photo.resolve(), "URL resolves to the file"
 
 
 def _report_rows(tmp_path, scores=(0.6, 0.4, 0.0)):

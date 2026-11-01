@@ -1031,11 +1031,14 @@ def verdict(row: dict, threshold: float) -> str:
 def image_src(path: Path, out: Path) -> str:
     """Relative URL from the sheet to the album photo, so nothing is embedded.
 
-    Paths are emitted raw (only HTML-escaped): album names are UTF-8 on disk and
-    some CDN filenames already carry literal ``%28``-style escapes, so
-    percent-encoding here would double-encode both.
+    This is a URL, not a filesystem path, so it is percent-encoded: album names
+    are UTF-8, and a few CDN filenames carry literal ``%28``-style escapes that
+    must become ``%2528`` or the browser decodes them into ``(`` and misses.
+    ``urllib.parse.unquote`` turns the result back into a real path.
     """
-    return html.escape(os.path.relpath(path, out.parent), quote=True)
+    import urllib.parse
+
+    return html.escape(urllib.parse.quote(os.path.relpath(path, out.parent), safe="/"), quote=True)
 
 
 def face_box_style(box, width: int, height: int) -> str:
