@@ -109,6 +109,11 @@ Rules:
   album folders already on the share are left alone.
 - `APPRISE_URL` notifies after an **upload** that moved photos; downloads are
   silent.
+- Hand decisions live in `refs/<name>/overrides.json` (`album/file.JPG` ->
+  `keep`/`drop`, written by `review_server.py` or by hand). They win over the
+  score in both directions: `keep` exports a photo that scored low or had no
+  detectable face, `drop` removes one that scored well. Entries that match no
+  photo are reported as dead lines.
 
 ## Gotchas
 

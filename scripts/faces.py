@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import os
 import shutil
 import sqlite3
@@ -624,9 +625,15 @@ def collect(
     roots: list[Path],
     min_face: float = DEFAULT_MIN_FACE,
     pipeline: str | None = None,
+    overrides: dict[str, str] | None = None,
 ) -> list[dict]:
-    """Per-photo rows: best score, best face box, face count above ``min_face``."""
+    """Per-photo rows: best score, best face box, face count above ``min_face``.
+
+    ``overrides`` maps a photo's path relative to its root (``album/file.JPG``) to
+    ``keep``/``drop``, which is what a hand decision reads like in the json file.
+    """
     pipeline = pipeline or pipelines(db)[0]
+    overrides = overrides or {}
     gal = gallery(db, person, pipeline)
     rows = []
     for root in roots:
@@ -639,10 +646,14 @@ def collect(
                 size = db.execute(
                     "SELECT width, height FROM photos WHERE sha1 = ? AND pipeline = ?", (sha1, pipeline)
                 ).fetchone() or (0, 0)
+                rel = str(path.relative_to(root))
                 rows.append(
                     {
                         "album": album.name,
                         "pipeline": pipeline,
+                        "sha1": sha1,
+                        "rel": rel,
+                        "override": overrides.get(rel),
                         "path": path,
                         "root": root,
                         "score": score,
@@ -656,6 +667,59 @@ def collect(
     return rows
 
 
+# --- overrides --------------------------------------------------------------
+
+OVERRIDE_ACTIONS = ("keep", "drop")
+
+
+def overrides_path(refs_root: Path, person: str) -> Path:
+    """Where hand decisions live: ``refs/<person>/overrides.json``."""
+    return Path(refs_root) / person / "overrides.json"
+
+
+def load_overrides(path: Path) -> dict[str, str]:
+    """``album/file.JPG`` -> ``keep``/``drop``; a missing file means no decisions."""
+    path = Path(path)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"{path} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit(f"{path} should hold an object of album/file.JPG -> keep|drop")
+    return {str(k): v for k, v in data.items() if v in OVERRIDE_ACTIONS}
+
+
+def save_overrides(path: Path, decisions: dict[str, str]) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    body = json.dumps(dict(sorted(decisions.items())), indent=2, ensure_ascii=False)
+    tmp.write_text(body + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
+def apply_decision(path: Path, key: str, action: str) -> dict[str, str]:
+    """Record ``keep``/``drop``/``clear`` for ``album/file.JPG`` and persist it."""
+    if action not in (*OVERRIDE_ACTIONS, "clear"):
+        raise ValueError(f"unknown action {action!r} (keep, drop or clear)")
+    decisions = load_overrides(path)
+    if action == "clear":
+        decisions.pop(key, None)
+    else:
+        decisions[key] = action
+    save_overrides(path, decisions)
+    return decisions
+
+
+def unused_overrides(overrides: dict[str, str], rows: list[dict]) -> list[str]:
+    """Decision keys that match no photo on disk (renamed album, typo)."""
+    seen = {r["rel"] for r in rows}
+    return sorted(key for key in overrides if key not in seen)
+
+
 # --- decisions --------------------------------------------------------------
 
 
@@ -663,12 +727,13 @@ def sweep(rows: list[dict], edges=BANDS) -> list[tuple[float, int, float]]:
     """(threshold, photos kept, share of all photos kept) per candidate threshold."""
     total = len(rows) or 1
     scores = [r["score"] for r in rows if r["faces"]]
-    return [(t, sum(1 for s in scores if s >= t), sum(1 for s in scores if s >= t) / total * 100) for t in edges]
+    kept = lambda t: sum(1 for s in scores if s >= t)  # noqa: E731 - sweep stays a one-liner
+    return [(t, kept(t), kept(t) / total * 100) for t in edges]
 
 
 def matched_rows(rows: list[dict], threshold: float) -> list[dict]:
-    """Photos whose best face scores at or above ``threshold``."""
-    return [r for r in rows if r["faces"] and r["score"] >= threshold]
+    """Photos that end up in the export: scored matches plus hand-kept ones."""
+    return [r for r in rows if verdict(r, threshold) in ("matched", "included")]
 
 
 def export_matches(
@@ -1000,6 +1065,7 @@ table{border-collapse:collapse;margin:6px 0} td,th{padding:2px 10px;border-botto
 .card{display:inline-block;vertical-align:top;width:440px;margin:6px;background:#1a1a1a;border-radius:6px;
       padding:8px;border-left:5px solid #333}
 .card.matched{border-left-color:#5ec26a} .card.unknown{border-left-color:#f0a020}
+.card.included{border-left-color:#6aa9e0} .card.excluded{border-left-color:#c05c5c}
 .card.ref{width:140px;border-left-color:#444}
 .frame{position:relative;display:block}
 .frame img{width:100%;border-radius:4px;display:block;background:#000}
@@ -1007,6 +1073,11 @@ table{border-collapse:collapse;margin:6px 0} td,th{padding:2px 10px;border-botto
 .row{display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap}
 .badge{font:700 13px ui-monospace,monospace;padding:2px 7px;border-radius:3px;background:#2a2a2a;color:#bbb}
 .badge.ok{background:#1f3d24;color:#7ddc89} .badge.warn{background:#3d3018;color:#f0a020}
+.badge.add{background:#1c3550;color:#8ec7f0} .badge.drop{background:#3d1f1f;color:#e07a7a}
+.actions{display:flex;gap:6px;margin-top:6px}
+.actions button{font:600 12px system-ui,sans-serif;background:#262626;color:#ccc;border:1px solid #333;
+                border-radius:4px;padding:3px 9px;cursor:pointer}
+.actions button:hover{background:#333}
 .score{font-weight:600;font-size:14px;font-variant-numeric:tabular-nums} .muted{color:#777}
 details.album{margin:10px 0}
 details.album>summary{cursor:pointer;position:sticky;top:0;z-index:2;background:#111;color:#ddd;
@@ -1015,12 +1086,28 @@ details.album>summary .muted{font-weight:400;font-size:13px}
 @media print{details{display:block} details>summary{position:static}}
 """
 
-BADGES = {"matched": ("ok", "MATCH"), "below": ("", "below"), "unknown": ("warn", "no face")}
+BADGES = {
+    "matched": ("ok", "MATCH"),
+    "below": ("", "below"),
+    "unknown": ("warn", "no face"),
+    "included": ("add", "ADDED"),
+    "excluded": ("drop", "DROPPED"),
+}
 NEAR_MISS = 0.10  # "below but close": within this much under the threshold
 
 
 def verdict(row: dict, threshold: float) -> str:
-    """``matched`` / ``below`` / ``unknown`` — the same rule ``export`` uses."""
+    """One of matched / below / unknown / included / excluded.
+
+    A hand decision wins over the score in both directions: ``drop`` removes a
+    photo even when it scored well, ``keep`` adds one that scored badly or had no
+    detectable face at all.
+    """
+    override = row.get("override")
+    if override == "drop":
+        return "excluded"
+    if override == "keep":
+        return "included"
     if not row["faces"]:
         return "unknown"
     return "matched" if row["score"] >= threshold else "below"
@@ -1057,7 +1144,24 @@ def write_report(
     out: Path,
     threshold: float,
     min_face: float,
+    interactive: bool = False,
 ) -> Path:
+    """Write ``render_report`` output to ``out``."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render_report(db, person, rows, out, threshold, min_face, interactive), encoding="utf-8")
+    return out
+
+
+def render_report(
+    db: sqlite3.Connection,
+    person: str,
+    rows: list[dict],
+    out: Path,
+    threshold: float,
+    min_face: float,
+    interactive: bool = False,
+    subtitle: str = "",
+) -> str:
     """HTML sheet with one collapsible section per album.
 
     The verdict is carried by the card's left border (green matched, orange no
@@ -1065,8 +1169,10 @@ def write_report(
     it out for screenshots and colour-blind viewers. Photos are linked relatively
     (nothing embedded), so re-running at another threshold is instant.
     """
-    out.parent.mkdir(parents=True, exist_ok=True)
-    parts = [f"<h1>Scores for {person!r} — threshold {threshold:.2f}, min face {min_face:.0f}px</h1>"]
+    heading = f"Scores for {person!r} — threshold {threshold:.2f}, min face {min_face:.0f}px"
+    if subtitle:
+        heading += f" <span class='muted' style='font-size:13px;font-weight:400'>{html.escape(subtitle)}</span>"
+    parts = [f"<h1>{heading}</h1>"]
 
     parts.append("<h2>Enrolled references (verify these are all her)</h2><div>")
     query = "SELECT source, crop FROM refs WHERE person = ? AND pipeline = ? ORDER BY source"
@@ -1102,17 +1208,45 @@ def write_report(
             state = verdict(r, threshold)
             cls, label = BADGES[state]
             box = face_box_style(r["best_box"], r.get("width", 0), r.get("height", 0))
-            rel = r["path"].relative_to(r["root"])
+            rel = r["rel"]
+            actions = ""
+            if interactive:
+                key = html.escape(rel, quote=True)
+                actions = (
+                    f'<div class="actions">'
+                    f'<button onclick="decide(this,&quot;{key}&quot;,&quot;keep&quot;)">keep</button>'
+                    f'<button onclick="decide(this,&quot;{key}&quot;,&quot;drop&quot;)">drop</button>'
+                    f'<button onclick="decide(this,&quot;{key}&quot;,&quot;clear&quot;)">clear</button></div>'
+                )
             parts.append(
-                f'<div class="card {state}"><span class="frame" title="{html.escape(str(rel), quote=True)}">'
+                f'<div class="card {state}" data-state="{state}">'
+                f'<span class="frame" title="{html.escape(rel, quote=True)}">'
                 f'<img loading="lazy" src="{image_src(r["path"], out)}">'
                 f"{f'<span class="box" style="{box}"></span>' if box else ''}</span>"
                 f'<div class="row"><span class="badge {cls}">{label}</span>'
                 f'<span class="score">{r["score"]:.3f}</span>'
-                f'<span class="muted">{r["faces"]} face(s) ≥ {min_face:.0f}px</span></div></div>'
+                f'<span class="muted">{r["faces"]} face(s) ≥ {min_face:.0f}px</span></div>{actions}</div>'
             )
         parts.append("</details>")
 
-    sheet = f"<!doctype html><meta charset=utf-8><title>face review — {person}</title><style>{REPORT_CSS}</style>\n"
-    out.write_text(sheet + "\n".join(parts), encoding="utf-8")
-    return out
+    head = f"<!doctype html><meta charset=utf-8><title>face review — {person}</title><style>{REPORT_CSS}</style>\n"
+    return head + "\n".join(parts) + (INTERACTIVE_JS if interactive else "")
+
+
+INTERACTIVE_JS = """
+<script>
+const BADGE = {matched:["ok","MATCH"], below:["","below"], unknown:["warn","no face"],
+               included:["add","ADDED"], excluded:["drop","DROPPED"]};
+async function decide(button, key, action) {
+  const response = await fetch("/decide", {method: "POST", body: JSON.stringify({key, action})});
+  if (!response.ok) { alert("could not save: " + response.status); return; }
+  const card = button.closest(".card");
+  const state = action === "keep" ? "included" : action === "drop" ? "excluded" : card.dataset.state;
+  const [cls, label] = BADGE[state];
+  card.className = "card " + state;
+  const badge = card.querySelector(".badge");
+  badge.className = "badge " + cls;
+  badge.textContent = label;
+}
+</script>
+"""

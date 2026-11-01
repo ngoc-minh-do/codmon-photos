@@ -196,7 +196,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {sheet}")
         return 0
 
-    rows = faces.collect(db, args.person, args.photos, args.min_face, faces.pipeline_for(db, args.detector))
+    overrides_file = faces.overrides_path(args.refs, args.person)
+    overrides = faces.load_overrides(overrides_file)
+    rows = faces.collect(db, args.person, args.photos, args.min_face, faces.pipeline_for(db, args.detector), overrides)
+    unused = faces.unused_overrides(overrides, rows)
+    if unused:
+        print(f"{len(unused)} override entr(ies) in {overrides_file} match no photo: {', '.join(unused[:3])}")
     if args.cmd == "report":
         out = args.out or args.db.parent / f"report-{args.person}-{args.detector}.html"
         print("threshold  photos kept  share")

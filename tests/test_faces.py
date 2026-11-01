@@ -520,6 +520,8 @@ def _report_rows(tmp_path, scores=(0.6, 0.4, 0.0)):
                 "pipeline": PIPE,
                 "path": path,
                 "root": tmp_path / "downloads",
+                "rel": f"album/{path.name}",
+                "override": None,
                 "score": score,
                 "faces": 0 if score == 0.0 else 1,
                 "face_width": 60.0 if score else 0.0,
@@ -706,3 +708,89 @@ def test_report_album_without_matches_starts_collapsed(tmp_path):
 
     assert "<details class='album' open>" not in html_text
     assert "<details class='album'>" in html_text
+
+
+def test_overrides_roundtrip_and_clear(tmp_path):
+    path = tmp_path / "refs" / "kid" / "overrides.json"
+    assert faces.load_overrides(path) == {}, "a missing file means no decisions"
+
+    faces.apply_decision(path, "album/a.jpg", "keep")
+    faces.apply_decision(path, "album/b.jpg", "drop")
+    assert faces.load_overrides(path) == {"album/a.jpg": "keep", "album/b.jpg": "drop"}
+    assert "album/a.jpg" in path.read_text(), "the key is the readable path, not a hash"
+
+    faces.apply_decision(path, "album/a.jpg", "clear")
+    assert faces.load_overrides(path) == {"album/b.jpg": "drop"}
+    with pytest.raises(ValueError, match="unknown action"):
+        faces.apply_decision(path, "album/b.jpg", "maybe")
+
+
+def test_override_changes_the_verdict_both_ways():
+    low = {"faces": 1, "score": 0.10, "override": "keep"}
+    high = {"faces": 3, "score": 0.90, "override": "drop"}
+    plain = {"faces": 3, "score": 0.90, "override": None}
+    noface = {"faces": 0, "score": 0.0, "override": "keep"}
+
+    assert faces.verdict(low, 0.45) == "included"
+    assert faces.verdict(high, 0.45) == "excluded"
+    assert faces.verdict(plain, 0.45) == "matched"
+    assert faces.verdict(noface, 0.45) == "included", "a kept photo with no detectable face still exports"
+
+
+def test_matched_rows_applies_overrides(tmp_path):
+    album = tmp_path / "album"
+    album.mkdir()
+    rows = []
+    for name, score, override in (("keep.jpg", 0.05, "keep"), ("drop.jpg", 0.95, "drop"), ("auto.jpg", 0.60, None)):
+        path = album / name
+        path.write_bytes(b"x")
+        rows.append(
+            {
+                "album": "album",
+                "path": path,
+                "root": tmp_path,
+                "rel": f"album/{name}",
+                "score": score,
+                "faces": 1,
+                "override": override,
+            }
+        )
+
+    picked = [r["rel"] for r in faces.matched_rows(rows, 0.45)]
+    assert picked == ["album/keep.jpg", "album/auto.jpg"]
+
+
+def test_unused_overrides_flags_renamed_paths(tmp_path):
+    rows = [{"rel": "album/here.jpg"}]
+    overrides = {"album/here.jpg": "keep", "album/gone.jpg": "drop"}
+    assert faces.unused_overrides(overrides, rows) == ["album/gone.jpg"]
+
+
+def test_report_marks_manual_decisions(tmp_path):
+    db = faces.open_db(tmp_path / "faces.db")
+    add_ref(db)
+    rows = _report_rows(tmp_path)
+    rows[0]["override"] = "drop"  # the 0.6 match
+    rows[2]["override"] = "keep"  # the no-face photo
+    out = tmp_path / ".cache" / "manual.html"
+
+    faces.write_report(db, "kid", rows, out, 0.45, 40)
+    html_text = out.read_text()
+
+    assert ">DROPPED<" in html_text and ">ADDED<" in html_text
+    assert 'class="card excluded"' in html_text
+    assert 'class="card included"' in html_text
+    assert ".card.included{border-left-color:#6aa9e0}" in html_text
+
+
+def test_report_can_render_action_buttons(tmp_path):
+    db = faces.open_db(tmp_path / "faces.db")
+    add_ref(db)
+    out = tmp_path / ".cache" / "interactive.html"
+
+    faces.write_report(db, "kid", _report_rows(tmp_path), out, 0.45, 40, interactive=True)
+    html_text = out.read_text()
+
+    assert html_text.count('class="actions"') == 3, "one action row per photo card"
+    assert 'fetch("/decide"' in html_text
+    assert "album/p0.jpg" in html_text, "the button payload is the readable key"

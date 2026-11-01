@@ -91,6 +91,17 @@ hardlinks instead of copying, `--prune` drops earlier copies that no longer
 match. Scores are cached in `.cache/faces.db` keyed by file content, so trying
 another threshold never re-runs a model and never needs a re-scan.
 
+Photos the model gets wrong can be corrected by hand without touching the
+model or the threshold — run the local review server and click:
+
+```bash
+uv run scripts/review_server.py <name> --threshold 0.45   # http://127.0.0.1:8765
+```
+
+`keep` exports a photo the score missed (even with no detected face), `drop`
+removes a false positive. Decisions are stored in `refs/<name>/overrides.json`
+keyed by `album/file.JPG`, and `export` / `prune` respect them.
+
 `upload` needs all four `SMB_*` vars in `.env`; it uploads only files missing on
 the share (same name and size are skipped) and never deletes anything unless
 `--delete` is passed. `APPRISE_URL` fires after an upload that actually moved
