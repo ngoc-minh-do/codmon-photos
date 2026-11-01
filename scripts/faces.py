@@ -47,6 +47,9 @@ DEFAULT_MIN_FACE = 40  # narrower faces are detected but not judged
 DEFAULT_FLOOR = 20  # faces narrower than this are never stored
 DEFAULT_THRESHOLD = 0.55  # measured: below this, other children score as matches
 BANDS = (0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65)
+# evaluate walks a wider ladder than the report sweep: the sweep is about picking
+# one of a few candidates, this is about seeing where the two populations meet.
+EVALUATE_EDGES = tuple(round(0.20 + 0.05 * i, 2) for i in range(16))  # 0.20 .. 0.95
 
 # ArcFace 5-point template (112x112); same constants as insightface's norm_crop.
 ARC_TEMPLATE = np.array(
@@ -714,7 +717,7 @@ def apply_decision(path: Path, key: str, action: str) -> dict[str, str]:
     return decisions
 
 
-def evaluate(rows: list[dict], edges=BANDS) -> list[dict]:
+def evaluate(rows: list[dict], edges=EVALUATE_EDGES) -> list[dict]:
     """Per-threshold view of the hand decisions: would the score agree with you?
 
     ``keeps_matched`` counts photos you marked ``keep`` that the score would have
@@ -743,7 +746,7 @@ EVALUATE_LEGEND = """\
   drops leaked    drop photos above the threshold - only your drop keeps them out"""
 
 
-def evaluate_report(rows: list[dict], edges=BANDS) -> str:
+def evaluate_report(rows: list[dict], edges=EVALUATE_EDGES) -> str:
     """Text table over ``evaluate`` results, plus what is still unreviewed."""
     table = evaluate(rows, edges)
     keeps = sum(1 for r in rows if r.get("override") == "keep")

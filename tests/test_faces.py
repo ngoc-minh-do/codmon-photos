@@ -853,3 +853,10 @@ def test_evaluate_report_states_reviewed_and_pinned_counts():
     assert "only your drop keeps them out" in text
     assert "keeps found + keeps pinned" not in text, "the legend explains, it does not restate the formula twice"
     assert "0.45" in text
+
+
+def test_evaluate_default_range_is_wide():
+    edges = faces.EVALUATE_EDGES
+    assert edges[0] == 0.20 and edges[-1] == 0.95
+    assert len(edges) == 16
+    assert len(faces.evaluate(_reviewed_rows())) == len(edges)
