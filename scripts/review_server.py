@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mark photos keep/drop from the browser instead of editing files.
 
-    uv run scripts/review_server.py kid [--threshold 0.45] [--port 8765]
+    uv run scripts/review_server.py kid [--threshold 0.55] [--port 8765]
 
 Serves the review sheet on http://127.0.0.1:8765 with keep / drop / clear buttons.
 A click writes the decision to ``refs/<person>/overrides.json`` (keyed by

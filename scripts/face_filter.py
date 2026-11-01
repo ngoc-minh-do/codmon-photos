@@ -4,7 +4,7 @@
     uv run scripts/face_filter.py enroll <name>        # refs/<name>/face/*.jpg -> gallery
     uv run scripts/face_filter.py scan                 # detect + embed every photo (cached)
     uv run scripts/face_filter.py report <name>        # review sheet + threshold sweep
-    uv run scripts/face_filter.py export <name> --threshold 0.50
+    uv run scripts/face_filter.py export <name> --threshold 0.55
     uv run scripts/face_filter.py upload <name>            # -> SMB share
 
 References live in ``refs/<name>/face/``; embeddings and scores in
@@ -41,8 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  uv run scripts/face_filter.py enroll kid\n"
             "  uv run scripts/face_filter.py scan\n"
-            "  uv run scripts/face_filter.py report kid --threshold 0.45\n"
-            "  uv run scripts/face_filter.py export kid --threshold 0.45 --yes\n"
+            "  uv run scripts/face_filter.py report kid --threshold 0.55\n"
+            "  uv run scripts/face_filter.py export kid --threshold 0.55 --yes\n"
         ),
     )
     ap.add_argument(

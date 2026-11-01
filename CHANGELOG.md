@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   YuNet and embeddings are the ArcFace `w600k_r50` head, both plain ONNX;
   embeddings are cached by file content in `.cache/faces.db`, so changing the
   threshold never re-runs a model and never needs a re-scan.
+- The default similarity threshold is `0.55` (was `0.45`): on a reviewed sample
+  every photo below 0.55 was another child, while her own photos were either
+  above it or pinned by a `keep` decision.
 - SCRFD (`det_10g`) is the default detector, with `--detector yunet` as the
   alternative; a second face detector selectable via `--detector`, plus a
   `compare` command that reports agreement, per-detector-only finds and score

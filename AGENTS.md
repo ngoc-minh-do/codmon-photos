@@ -61,9 +61,9 @@ tags (each photo row is only `{id, url}`).
 uv run scripts/face_filter.py enroll <name>
 uv run scripts/face_filter.py scan                    # detect + embed every photo (cached)
 uv run scripts/face_filter.py report <name>            # sweep + .cache/report-<name>.html
-uv run scripts/face_filter.py export <name> --threshold 0.50 --yes
+uv run scripts/face_filter.py export <name> --threshold 0.55 --yes
 uv run scripts/face_filter.py upload <name> --yes      # optional: mirror to the NAS
-uv run scripts/face_filter.py compare <name> --threshold 0.45   # scrfd vs yunet
+uv run scripts/face_filter.py compare <name> --threshold 0.55   # scrfd vs yunet
 ```
 
 Rules:

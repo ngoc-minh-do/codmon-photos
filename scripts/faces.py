@@ -45,7 +45,7 @@ DEFAULT_MATCHED = Path("matched")
 DEFAULT_REFS = Path("refs")
 DEFAULT_MIN_FACE = 40  # narrower faces are detected but not judged
 DEFAULT_FLOOR = 20  # faces narrower than this are never stored
-DEFAULT_THRESHOLD = 0.45
+DEFAULT_THRESHOLD = 0.55  # measured: below this, other children score as matches
 BANDS = (0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65)
 
 # ArcFace 5-point template (112x112); same constants as insightface's norm_crop.

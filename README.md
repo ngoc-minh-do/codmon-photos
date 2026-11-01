@@ -65,7 +65,7 @@ photos you enroll once.
 uv run scripts/face_filter.py enroll <name>          # build the reference gallery
 uv run scripts/face_filter.py scan                   # embed every photo (cached)
 uv run scripts/face_filter.py report <name>          # threshold sweep + review sheet
-uv run scripts/face_filter.py export <name> --threshold 0.50 --yes
+uv run scripts/face_filter.py export <name> --threshold 0.55 --yes
 uv run scripts/face_filter.py upload <name> --yes   # optional: mirror to the NAS
 ```
 
@@ -77,7 +77,7 @@ so both can be run and compared:
 ```bash
 uv run scripts/face_filter.py scan --detector scrfd
 uv run scripts/face_filter.py scan --detector yunet
-uv run scripts/face_filter.py compare <name> --threshold 0.45
+uv run scripts/face_filter.py compare <name> --threshold 0.55
 ```
 
 `compare` reports how many photos both detectors keep, how many only one does,
@@ -95,7 +95,7 @@ Photos the model gets wrong can be corrected by hand without touching the
 model or the threshold — run the local review server and click:
 
 ```bash
-uv run scripts/review_server.py <name> --threshold 0.45   # http://127.0.0.1:8765
+uv run scripts/review_server.py <name> --threshold 0.55   # http://127.0.0.1:8765
 ```
 
 `keep` exports a photo the score missed (even with no detected face), `drop`
