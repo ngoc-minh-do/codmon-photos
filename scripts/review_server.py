@@ -115,6 +115,7 @@ def render(state: dict) -> str:
         interactive=True,
         subtitle="click keep / drop",
         src_for=src_for(state),
+        show_names=True,
     )
 
 

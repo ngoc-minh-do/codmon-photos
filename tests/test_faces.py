@@ -509,7 +509,7 @@ def test_image_src_encodes_for_urls_and_decodes_back_to_the_file(tmp_path):
 
 def _report_rows(tmp_path, scores=(0.6, 0.4, 0.0)):
     album = tmp_path / "downloads" / "album"
-    album.mkdir(parents=True)
+    album.mkdir(parents=True, exist_ok=True)
     rows = []
     for i, score in enumerate(scores):
         path = album / f"p{i}.jpg"
@@ -885,3 +885,19 @@ def test_evaluate_default_range_is_wide():
     assert edges[0] == 0.20 and edges[-1] == 0.95
     assert len(edges) == 16
     assert len(faces.evaluate(_reviewed_rows())) == len(edges)
+
+
+def test_render_report_can_show_file_names(tmp_path):
+    """The review server puts the file name on the card, not just in the tooltip."""
+    db = faces.open_db(tmp_path / "faces.db")
+    add_ref(db)
+    out = tmp_path / ".cache" / "named.html"
+
+    faces.write_report(db, "kid", _report_rows(tmp_path), out, 0.45, 40, interactive=True, show_names=True)
+    with_names = out.read_text()
+    faces.write_report(db, "kid", _report_rows(tmp_path), out, 0.45, 40, interactive=True)
+    without = out.read_text()
+
+    assert with_names.count('class="fname"') == 3
+    assert 'class="fname">p0.jpg' in with_names
+    assert 'class="fname"' not in without, "the static sheet keeps names in the tooltip only"

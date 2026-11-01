@@ -108,6 +108,9 @@ uv run scripts/face_filter.py evaluate <name> [--baseline 0.55]
 pins plus undecided matches at the baseline, which is the honest assumption that
 what you ship today is right; `blocked out` / `blocked in` cover your `drop`s.
 
+Every card carries the file name (and the full path on hover), so a decision can
+be traced back to a file without leaving the page.
+
 `keep` exports a photo the score missed (even with no detected face), `drop`
 removes a false positive. Decisions are stored in `refs/<name>/overrides.json`
 keyed by `album/file.JPG`, and `export` / `prune` respect them.

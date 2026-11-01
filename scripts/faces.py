@@ -1158,6 +1158,7 @@ table{border-collapse:collapse;margin:6px 0} td,th{padding:2px 10px;border-botto
 .actions button{font:600 12px system-ui,sans-serif;background:#262626;color:#ccc;border:1px solid #333;
                 border-radius:4px;padding:3px 9px;cursor:pointer}
 .actions button:hover{background:#333}
+.fname{font:11px ui-monospace,monospace;color:#777;margin-top:4px;word-break:break-all}
 .score{font-weight:600;font-size:14px;font-variant-numeric:tabular-nums} .muted{color:#777}
 details.album{margin:10px 0}
 details.album>summary{cursor:pointer;position:sticky;top:0;z-index:2;background:#111;color:#ddd;
@@ -1226,10 +1227,13 @@ def write_report(
     min_face: float,
     interactive: bool = False,
     src_for=None,
+    show_names: bool = False,
 ) -> Path:
     """Write ``render_report`` output to ``out``."""
     out.parent.mkdir(parents=True, exist_ok=True)
-    body = render_report(db, person, rows, out, threshold, min_face, interactive, src_for=src_for)
+    body = render_report(
+        db, person, rows, out, threshold, min_face, interactive, src_for=src_for, show_names=show_names
+    )
     out.write_text(body, encoding="utf-8")
     return out
 
@@ -1244,6 +1248,7 @@ def render_report(
     interactive: bool = False,
     subtitle: str = "",
     src_for=None,
+    show_names: bool = False,
 ) -> str:
     """HTML sheet with one collapsible section per album.
 
@@ -1311,7 +1316,8 @@ def render_report(
                 f"{f'<span class="box" style="{box}"></span>' if box else ''}</span>"
                 f'<div class="row"><span class="badge {cls}">{label}</span>'
                 f'<span class="score">{r["score"]:.3f}</span>'
-                f'<span class="muted">{r["faces"]} face(s) ≥ {min_face:.0f}px</span></div>{actions}</div>'
+                f'<span class="muted">{r["faces"]} face(s) ≥ {min_face:.0f}px</span></div>{actions}'
+                f"{f'<div class="fname">{html.escape(r["path"].name)}</div>' if show_names else ''}</div>"
             )
         parts.append("</details>")
 
