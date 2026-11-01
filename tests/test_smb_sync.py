@@ -161,3 +161,11 @@ def test_upload_body_lists_new_albums_and_optional_removals(tmp_path):
     assert smb_sync.upload_body([], 0, 2, "//nas/photos/kid") == (
         "0 new photos · 0 already there\n2 removed\n→ //nas/photos/kid"
     )
+
+
+def test_upload_report_is_planning_only_wording_free_of_confusion():
+    """The CLI adds the dry-run line; the report itself must not claim success."""
+    stats = {"uploads": [1, 2], "skipped": []}
+    text = smb_sync.upload_report(stats)
+    assert text == "2 to upload, 0 already there"
+    assert "uploaded" not in text

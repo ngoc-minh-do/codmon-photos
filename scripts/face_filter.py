@@ -186,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{smb_sync.remote_base(cfg, args.person)}/ <- {args.matched / args.person}/")
         print(smb_sync.upload_report(stats, prunable))
         if not args.yes:
+            print(f"dry run: nothing was sent (add --yes to upload {len(stats['uploads'])} file(s))")
             return 0
         uploaded = smb_sync.upload_files(stats["uploads"], client)
         removed = 0
